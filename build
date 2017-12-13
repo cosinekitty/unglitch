@@ -1,2 +1,5 @@
 #!/bin/bash
-cmake . && make
+mkdir -p compile
+pushd compile > /dev/null
+cmake .. && make && make install
+popd

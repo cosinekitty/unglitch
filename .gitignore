@@ -36,3 +36,5 @@ CMakeFiles
 CMakeCache.txt
 Makefile
 *.cmake
+compile/
+bin/
