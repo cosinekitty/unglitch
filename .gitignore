@@ -38,3 +38,6 @@ Makefile
 *.cmake
 compile/
 bin/
+
+# Visual Studio Code
+.vscode/
