@@ -32,6 +32,17 @@ namespace unglitch
         return atol(attr);
     }
 
+    double FloatAttribute(tinyxml2::XMLElement *elem, const char *name)
+    {
+        using namespace std;
+
+        const char *attr = elem->Attribute(name);
+        if (!attr)
+            throw Error(string("Cannot find attribute ") + name);
+        
+        return atof(attr);
+    }
+
     void WaveTrack::Parse(tinyxml2::XMLElement *trackElem)
     {
         using namespace std;
@@ -49,6 +60,38 @@ namespace unglitch
         XMLElement *seqElem = clipElem->FirstChildElement("sequence");
         if (!seqElem)
             throw Error("Cannot find <sequence> inside <waveclip>");
+
+        nsamples = NumericAttribute(seqElem, "numsamples");
+
+        for (XMLElement *blockElem = seqElem->FirstChildElement("waveblock"); blockElem; blockElem = blockElem->NextSiblingElement("waveblock"))
+        {
+            /*
+                <waveblock start="0">
+					<simpleblockfile 
+                        filename="e0031f11.au" 
+                        len="194051" 
+                        min="-0.28178" 
+                        max="0.288315" 
+                        rms="0.068274"
+                    />
+				</waveblock>
+            */
+
+            long start = NumericAttribute(blockElem, "start");
+
+            XMLElement *fileElem = blockElem->FirstChildElement("simpleblockfile");
+            if (!fileElem)
+                throw Error("Cannot find <simpleblockfile> inside <waveblock>");
+
+            const char *filename = fileElem->Attribute("filename");
+            if (!filename)
+                throw Error("Missing filename attribute in <simpleblockfile>");
+
+            long length = NumericAttribute(fileElem, "len");
+            float ymin = FloatAttribute(fileElem, "min");
+            float ymax = FloatAttribute(fileElem, "max");
+            blockList.push_back(WaveBlock(filename, start, length, ymin, ymax));
+        }
     }
 
     void Project::Load(const char *filename)
