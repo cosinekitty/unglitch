@@ -29,5 +29,15 @@ int main(int argc, const char *argv[])
         return 1;
     }
 
+    cout << "Loaded xml: " << inAudacityProjectFileName << endl;
+
+    XMLElement *root = doc.RootElement();
+    XMLElement *trackElem = root->FirstChildElement("wavetrack");
+    while (trackElem)
+    {
+        cout << "Found wavetrack" << endl;
+        trackElem = trackElem->NextSiblingElement("wavetrack");
+    }
+
     return rc;
 }
