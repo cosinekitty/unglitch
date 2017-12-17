@@ -4,6 +4,8 @@
 #ifndef __DDC_UNGLITCH_H
 #define __DDC_UNGLITCH_H
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -17,6 +19,8 @@ namespace unglitch
 {
     bool IsLittleEndian();
     void ToggleFloatEndian(float *buffer, int length);
+
+    typedef std::vector<float> FloatVector;
 
     class Error
     {
@@ -52,6 +56,7 @@ namespace unglitch
         const std::string& Filename() const { return filename; }
         long Start() const { return start; }
         long Length() const { return length; }
+        float Peak() const { return std::max(fabs(ymin), fabs(ymax)); }
     };
 
     class WaveTrack
@@ -65,6 +70,7 @@ namespace unglitch
         void Parse(tinyxml2::XMLElement *trackElem);
         int NumBlocks() const { return static_cast<int>(blockList.size()); }
         WaveBlock& Block(int index) { return blockList.at(index); }
+        float Threshold() const;
     };
 
     class Project
@@ -104,8 +110,20 @@ namespace unglitch
         FILE *outfile;
 
     public:
-        AudioWriter(std::string outFileName);        
+        AudioWriter(std::string outFileName, int rate, int channels);
         ~AudioWriter();
+    };
+
+    class GlitchFilter
+    {
+    private:
+        int maxGlitchSamples;   // maximum number of consecutive samples to fix
+        float threshold;        // absolute value above which we consider a glitch
+
+    public:
+        GlitchFilter(int _maxGlitchSamples, float _threshold);
+        void FixGlitches(const FloatVector& inBuffer, FloatVector& outBuffer);
+        void Flush(FloatVector& outBuffer);
     };
 }
 

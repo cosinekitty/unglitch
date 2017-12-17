@@ -94,6 +94,38 @@ namespace unglitch
         }
     }
 
+    float WaveTrack::Threshold() const
+    {
+        // Find the smallest non-negative value that includes the vast majority of the block peaks.
+        // For simplicity we assume peak values are always in the range [0.001 .. 1.000]
+        // and we keep a histogram of bands rounded up to the next higher increment of 0.001.
+        const int NUMBANDS = 1000;
+        std::vector<int> histogram(1 + NUMBANDS);
+
+        for (const WaveBlock& block : blockList)
+        {
+            float peak = block.Peak();
+            float fband = ceil(peak * NUMBANDS);
+            if (fband < 0 || fband > NUMBANDS)
+                throw Error("Invalid fband = " + std::to_string(fband));
+
+            int band = static_cast<int>(fband);
+            ++histogram[band];
+        }
+
+        const float KeepRatio = 0.98;
+        int sum = 0;
+        for (int band=0; band <= NUMBANDS; ++band)
+        {
+            sum += histogram[band];
+            float ratio = static_cast<float>(sum) / static_cast<float>(blockList.size());
+            if (ratio >= KeepRatio)
+                return static_cast<float>(band) / static_cast<float>(NUMBANDS);
+        }
+
+        throw Error("Could not find threshold");
+    }
+
     void Project::InitDataPath(const char *inFileName)
     {
         using namespace std;
@@ -149,15 +181,18 @@ namespace unglitch
         if (nblocks != rightTrack.NumBlocks())
             throw Error("Left and right tracks have different number of blocks.");
 
-        AudioWriter writer(outFileName);
+        float threshold = std::max(leftTrack.Threshold(), rightTrack.Threshold());
+        cout << "Threshold = " << threshold << endl;
+        AudioWriter writer(outFileName, 44100, 2);
+        GlitchFilter filter(2000, threshold);
 
-        vector<float> leftBuffer;
-        vector<float> rightBuffer;
+        FloatVector leftBuffer;
+        FloatVector rightBuffer;
         long position = 0;
         for (int b=0; b < nblocks; ++b)
         {
             WaveBlock& leftBlock = leftTrack.Block(b);
-            WaveBlock& rightBlock = rightTrack.Block(b);
+            WaveBlock& rightBlock = rightTrack.Block(b);            
 
             if (leftBlock.Start() != position)
                 throw Error("Left block not at expected position.");
@@ -263,11 +298,14 @@ namespace unglitch
             throw Error("Could not read desired number of bytes from input file " + filename);
     }
 
-    AudioWriter::AudioWriter(std::string outFileName)
+    AudioWriter::AudioWriter(std::string outFileName, int rate, int channels)
         : outfile(fopen(outFileName.c_str(), "wb"))
     {
         if (!outfile)
             throw Error("Cannot open output file " + outFileName);
+
+        ((void)rate);
+        ((void)channels);
     }
 
     AudioWriter::~AudioWriter()
@@ -277,6 +315,23 @@ namespace unglitch
             fclose(outfile);
             outfile = nullptr;
         }
+    }
+
+    GlitchFilter::GlitchFilter(int _maxGlitchSamples, float _threshold)
+        : maxGlitchSamples(_maxGlitchSamples)
+        , threshold(_threshold)
+    {        
+    }
+
+    void GlitchFilter::FixGlitches(const FloatVector& inBuffer, FloatVector& outBuffer)
+    {        
+        (void)inBuffer;
+        (void)outBuffer;
+    }
+
+    void GlitchFilter::Flush(FloatVector& outBuffer)
+    {        
+        (void)outBuffer;
     }
 }
 
