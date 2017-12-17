@@ -108,10 +108,17 @@ namespace unglitch
     {
     private:
         FILE *outfile;
+        std::string outFileName;
+        FloatVector buffer;
 
     public:
-        AudioWriter(std::string outFileName, int rate, int channels);
+        AudioWriter(std::string _outFileName, int _rate, int _channels);
         ~AudioWriter();
+
+        void WriteStereo(const FloatVector& left, const FloatVector& right);
+
+    private:
+        void WriteData(const void *data, size_t nbytes);
     };
 
     class GlitchFilter

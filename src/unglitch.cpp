@@ -215,6 +215,8 @@ namespace unglitch
             leftReader.Read(&leftBuffer.front(), leftBlock.Length());
             rightReader.Read(&rightBuffer.front(), rightBlock.Length());
 
+            writer.WriteStereo(leftBuffer, rightBuffer);
+
             position += leftBlock.Length();
         }
     }
@@ -298,14 +300,34 @@ namespace unglitch
             throw Error("Could not read desired number of bytes from input file " + filename);
     }
 
-    AudioWriter::AudioWriter(std::string outFileName, int rate, int channels)
-        : outfile(fopen(outFileName.c_str(), "wb"))
+    AudioWriter::AudioWriter(std::string _outFileName, int _rate, int _channels)
+        : outfile(fopen(_outFileName.c_str(), "wb"))
+        , outFileName(_outFileName)
     {
         if (!outfile)
             throw Error("Cannot open output file " + outFileName);
 
-        ((void)rate);
-        ((void)channels);
+        // Write file header
+        // 00000000  64 6e 73 2e 5c 30 00 00  ff ff ff ff 06 00 00 00  |dns.\0..........|
+        // 00000010  44 ac 00 00 01 00 00 00  41 75 64 61 63 69 74 79  |D.......Audacity|
+        // 00000020  42 6c 6f 63 6b 46 69 6c  65 31 31 32 1b 00 83 be  |BlockFile112....|
+        // 00000030  cf cb 8f 3e 78 5c af 3d  58 b6 8a be 38 71 8f 3e  |...>x\.=X...8q.>|
+        // 00000040  8b b9 ae 3d ae dc 84 be  dc 0d 9c 3e d4 6a ab 3d  |...=.......>.j.=|
+        // 00000050  62 0b 93 be 55 6f 8e 3e  38 e7 af 3d 25 3a 81 be  |b...Uo.>8..=%:..|
+        // 00000060  97 13 11 3e ae 32 b6 3d  78 b3 50 be 5f 34 53 3e  |...>.2.=x.P._4S>|
+        // 00000070  cf 4a c7 3d 2b ed 22 be  92 7b 15 3e 31 dc 96 3d  |.J.=+."..{.>1..=|
+        // 00000080  96 f1 3d be 78 8f e7 3d  72 24 a0 3d a4 e8 0d be  |..=.x..=r$.=....|
+
+        uint32_t header[6];
+
+        memcpy(header, "dns.", 4);      // audio file signature
+        header[1] = sizeof(header);     // data begins immediately after this header
+        header[2] = 0xffffffffu;        // total data size unknown
+        header[3] = 6;                  // 32-bit IEEE floating point format
+        header[4] = _rate;              // sampling rate in Hz
+        header[5] = _channels;          // number of channels
+
+        WriteData(header, sizeof(header));
     }
 
     AudioWriter::~AudioWriter()
@@ -315,6 +337,31 @@ namespace unglitch
             fclose(outfile);
             outfile = nullptr;
         }
+    }
+
+    void AudioWriter::WriteStereo(const FloatVector& left, const FloatVector& right)
+    {
+        if (left.size() != right.size())
+            throw Error("Left and right channel buffers are different sizes in AudioWriter::WriteStereo");
+
+        // Merge and interleave the sample data from both input channels.
+        const int length = static_cast<int>(left.size());
+        buffer.resize(2 * length);
+        int k = 0;
+        for (int i=0; i < length; ++i)
+        {
+            buffer[k++] = left[i];
+            buffer[k++] = right[i];
+        }
+
+        WriteData(&buffer.front(), 2 * sizeof(float) * length);
+    }
+
+    void AudioWriter::WriteData(const void *data, size_t nbytes)
+    {
+        size_t written = fwrite(data, 1, nbytes, outfile);
+        if (written != nbytes)
+            throw Error("Error writing to file " + outFileName);
     }
 
     GlitchFilter::GlitchFilter(int _maxGlitchSamples, float _threshold)
