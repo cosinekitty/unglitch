@@ -4,6 +4,9 @@
 #ifndef __DDC_UNGLITCH_H
 #define __DDC_UNGLITCH_H
 
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -12,6 +15,9 @@
 
 namespace unglitch
 {
+    bool IsLittleEndian();
+    void ToggleFloatEndian(float *buffer, int length);
+
     class Error
     {
     private:
@@ -42,6 +48,10 @@ namespace unglitch
             , ymin(_ymin)
             , ymax(_ymax)
             {}
+
+        const std::string& Filename() const { return filename; }
+        long Start() const { return start; }
+        long Length() const { return length; }
     };
 
     class WaveTrack
@@ -53,15 +63,49 @@ namespace unglitch
 
     public:
         void Parse(tinyxml2::XMLElement *trackElem);
+        int NumBlocks() const { return static_cast<int>(blockList.size()); }
+        WaveBlock& Block(int index) { return blockList.at(index); }
     };
 
     class Project
     {
     private:
         std::vector<WaveTrack> channelList;
+        std::string dataPath;   // e.g. "/home/don/radio/edit/2017-12-10_data/"
 
     public:
-        void Load(const char *filename);
+        void Load(const char *inFileName);
+        void Convert(const char *outFileName);
+
+    private:
+        void InitDataPath(const char *inFileName);
+        std::string BlockFileName(const std::string& rawBlockFileName) const;
+    };
+
+    class AudioReader   // reads .au files
+    {
+    private:
+        FILE *infile;
+        std::string filename;
+
+    public:
+        AudioReader(std::string inFileName);
+        ~AudioReader();
+
+        void Read(float *buffer, int length);
+
+    private:
+        static uint32_t DecodeInt(const char *buffer, int offset);
+    };
+
+    class AudioWriter   // writes .au files
+    {
+    private:
+        FILE *outfile;
+
+    public:
+        AudioWriter(std::string outFileName);        
+        ~AudioWriter();
     };
 }
 
