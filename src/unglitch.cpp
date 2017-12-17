@@ -21,29 +21,6 @@
 
 namespace unglitch
 {
-    bool IsLittleEndian()
-    {
-        unsigned n = 0x30313233;
-        return ((const char *)&n)[0] == '3';
-    }
-
-    void ToggleFloatEndian(float *buffer, int length)
-    {
-        // Reverse bytes for little-endian machines.
-        if (IsLittleEndian())
-        {
-            uint32_t *raw = reinterpret_cast<uint32_t *>(buffer);
-            for (int i=0; i < length; ++i)
-            {
-                raw[i] = 
-                    ((raw[i] & 0x000000ffu) << 24) |
-                    ((raw[i] & 0x0000ff00u) << 8) |
-                    ((raw[i] & 0x00ff0000u) >> 8) |
-                    ((raw[i] & 0xff000000u) >> 24);
-            }
-        }
-    }
-
     long NumericAttribute(tinyxml2::XMLElement *elem, const char *name)
     {
         using namespace std;
@@ -284,8 +261,6 @@ namespace unglitch
         int bytesRead = fread(buffer, 1, bytesWanted, infile);
         if (bytesRead != bytesWanted)
             throw Error("Could not read desired number of bytes from input file " + filename);
-
-        ToggleFloatEndian(buffer, length);
     }
 
     AudioWriter::AudioWriter(std::string outFileName)
