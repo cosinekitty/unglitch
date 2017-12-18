@@ -126,6 +126,7 @@ namespace unglitch
     class GlitchFilter
     {
     private:
+        const int minGlitchSamples;   // shortest run of large sample values to fix
         const int maxGlitchSamples;   // maximum number of consecutive samples to fix
         const int gapSamples;         // number of quiet samples after a glitch to trigger ending the glitch
         float threshold;              // absolute value above which we consider a glitch
@@ -133,9 +134,11 @@ namespace unglitch
         int quietSampleCount;
         float peak;
         FloatVector glitch;           // holds raw samples for a glitch in progress
+        long sampleOffset;
+        long glitchOffset;
 
     public:
-        GlitchFilter(int _maxGlitchSamples, int _gapSamples, float _threshold);
+        GlitchFilter(int _minGlitchSamples, int _maxGlitchSamples, int _gapSamples, float _threshold);
         void FixGlitches(const FloatVector& inBuffer, FloatVector& outBuffer);
         void Flush(FloatVector& outBuffer);
     };

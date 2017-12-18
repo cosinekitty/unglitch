@@ -185,10 +185,11 @@ namespace unglitch
         cout << "Threshold = " << threshold << endl;
         AudioWriter writer(outFileName, 44100, 2);
 
+        const int minGlitchSamples = 50;
         const int maxGlitchSamples = 2000;
         const int gapSamples = 1000;
-        GlitchFilter leftFilter(maxGlitchSamples, gapSamples, threshold);
-        GlitchFilter rightFilter(maxGlitchSamples, gapSamples, threshold);
+        GlitchFilter leftFilter(minGlitchSamples, maxGlitchSamples, gapSamples, threshold);
+        GlitchFilter rightFilter(minGlitchSamples, maxGlitchSamples, gapSamples, threshold);
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
@@ -397,12 +398,17 @@ namespace unglitch
         buffer.resize(static_cast<size_t>(length - nsamples));
     }
 
-    GlitchFilter::GlitchFilter(int _maxGlitchSamples, int _gapSamples, float _threshold)
-        : maxGlitchSamples(_maxGlitchSamples)
+    GlitchFilter::GlitchFilter(int _minGlitchSamples, int _maxGlitchSamples, int _gapSamples, float _threshold)
+        : minGlitchSamples(_minGlitchSamples)
+        , maxGlitchSamples(_maxGlitchSamples)
         , gapSamples(_gapSamples)
         , threshold(_threshold)
         , inGlitch(false)
         , quietSampleCount(0)
+        , peak(0.0f)
+        , glitch()
+        , sampleOffset(0L)
+        , glitchOffset(0L)
     {        
     }
 
@@ -418,6 +424,7 @@ namespace unglitch
                 inGlitch = true;
                 peak = ax;
                 quietSampleCount = 0;
+                glitchOffset = sampleOffset;
             }
 
             if (inGlitch)
@@ -436,7 +443,41 @@ namespace unglitch
             {
                 outBuffer.push_back(x);
             }
+
+            ++sampleOffset;
         }
+    }
+
+    std::string Format(long value, int width)
+    {
+        using namespace std;
+
+        string text = to_string(value);
+        while (static_cast<int>(text.length()) < width)
+            text = "0" + text;
+
+        return text;
+    }
+
+    std::string TimeStamp(long offset)
+    {
+        using namespace std;
+
+        const long rate = 44100L;
+
+        long seconds = offset / rate;
+        offset %= rate;
+        long millis = (offset * 1000L) / rate;
+        long minutes = seconds / 60L;
+        seconds %= 60L;
+        long hours = minutes / 60L;
+        minutes %= 60L;
+
+        return        
+            to_string(hours) + ":" + 
+            Format(minutes, 2) + ":" + 
+            Format(seconds, 2) + "." + 
+            Format(millis, 3);
     }
 
     void GlitchFilter::Flush(FloatVector& outBuffer)
@@ -446,13 +487,18 @@ namespace unglitch
             // Leaving the glitch state.
             inGlitch = false;
 
-            // Calculate glitch attentuation factor.
-            float atten = threshold / peak;
-
-            // Make the glitchy part of the glitch buffer quieter.
             int glitchSampleCount = static_cast<int>(glitch.size()) - quietSampleCount;
-            for (int i=0; i < glitchSampleCount; ++i)
-                glitch[i] *= atten;
+            if (glitchSampleCount >= minGlitchSamples && glitchSampleCount <= maxGlitchSamples)
+            {
+                std::cout << "GlitchFilter: fixing " << glitchSampleCount << " samples at " << TimeStamp(glitchOffset) << std::endl;
+
+                // Calculate glitch attentuation factor.
+                float atten = 0.5 * (threshold / peak);
+
+                // Make the glitchy part of the glitch buffer quieter.
+                for (int i=0; i < glitchSampleCount; ++i)
+                    glitch[i] *= atten;
+            }
 
             // Append the corrected glitch buffer to the output buffer.
             for (float g : glitch)
@@ -460,8 +506,6 @@ namespace unglitch
 
             // Empty out the glitch buffer so it is ready for another glitch.
             glitch.clear();
-
-            std::cout << "GlitchFilter: fixed " << glitchSampleCount << " samples." << std::endl;
         }
     }
 }
