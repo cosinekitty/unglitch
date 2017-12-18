@@ -104,6 +104,8 @@ namespace unglitch
         static uint32_t DecodeInt(const char *buffer, int offset);
     };
 
+    void Consume(FloatVector &buffer, int nsamples);
+
     class AudioWriter   // writes .au files
     {
     private:
@@ -115,7 +117,7 @@ namespace unglitch
         AudioWriter(std::string _outFileName, int _rate, int _channels);
         ~AudioWriter();
 
-        void WriteStereo(const FloatVector& left, const FloatVector& right);
+        void WriteStereo(FloatVector& left, FloatVector& right);
 
     private:
         void WriteData(const void *data, size_t nbytes);
@@ -124,11 +126,16 @@ namespace unglitch
     class GlitchFilter
     {
     private:
-        int maxGlitchSamples;   // maximum number of consecutive samples to fix
-        float threshold;        // absolute value above which we consider a glitch
+        const int maxGlitchSamples;   // maximum number of consecutive samples to fix
+        const int gapSamples;         // number of quiet samples after a glitch to trigger ending the glitch
+        float threshold;              // absolute value above which we consider a glitch
+        bool inGlitch;
+        int quietSampleCount;
+        float peak;
+        FloatVector glitch;           // holds raw samples for a glitch in progress
 
     public:
-        GlitchFilter(int _maxGlitchSamples, float _threshold);
+        GlitchFilter(int _maxGlitchSamples, int _gapSamples, float _threshold);
         void FixGlitches(const FloatVector& inBuffer, FloatVector& outBuffer);
         void Flush(FloatVector& outBuffer);
     };

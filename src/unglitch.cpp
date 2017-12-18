@@ -184,10 +184,16 @@ namespace unglitch
         float threshold = std::max(leftTrack.Threshold(), rightTrack.Threshold());
         cout << "Threshold = " << threshold << endl;
         AudioWriter writer(outFileName, 44100, 2);
-        GlitchFilter filter(2000, threshold);
+
+        const int maxGlitchSamples = 2000;
+        const int gapSamples = 1000;
+        GlitchFilter leftFilter(maxGlitchSamples, gapSamples, threshold);
+        GlitchFilter rightFilter(maxGlitchSamples, gapSamples, threshold);
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
+        FloatVector leftCleaned;
+        FloatVector rightCleaned;
         long position = 0;
         for (int b=0; b < nblocks; ++b)
         {
@@ -212,13 +218,23 @@ namespace unglitch
             if (static_cast<long>(rightBuffer.size()) < rightBlock.Length())
                 rightBuffer.resize(rightBlock.Length());
 
-            leftReader.Read(&leftBuffer.front(), leftBlock.Length());
-            rightReader.Read(&rightBuffer.front(), rightBlock.Length());
+            leftReader.Read(leftBuffer.data(), leftBlock.Length());
+            rightReader.Read(rightBuffer.data(), rightBlock.Length());
 
-            writer.WriteStereo(leftBuffer, rightBuffer);
+            leftFilter.FixGlitches(leftBuffer, leftCleaned);
+            rightFilter.FixGlitches(rightBuffer, rightCleaned);
+
+            writer.WriteStereo(leftCleaned, rightCleaned);
 
             position += leftBlock.Length();
         }
+
+        leftFilter.Flush(leftCleaned);
+        rightFilter.Flush(rightCleaned);
+        if (leftCleaned.size() != rightCleaned.size())
+            throw Error("Bug detected: post-flush left and right channel lengths do not match!");
+
+        writer.WriteStereo(leftCleaned, rightCleaned);
     }
 
     std::string Project::BlockFileName(const std::string& fn) const
@@ -339,13 +355,13 @@ namespace unglitch
         }
     }
 
-    void AudioWriter::WriteStereo(const FloatVector& left, const FloatVector& right)
+    void AudioWriter::WriteStereo(FloatVector& left, FloatVector& right)
     {
-        if (left.size() != right.size())
-            throw Error("Left and right channel buffers are different sizes in AudioWriter::WriteStereo");
+        const int leftLength = left.size();
+        const int rightLength = right.size();
+        const int length = std::min(leftLength, rightLength);
 
         // Merge and interleave the sample data from both input channels.
-        const int length = static_cast<int>(left.size());
         buffer.resize(2 * length);
         int k = 0;
         for (int i=0; i < length; ++i)
@@ -354,7 +370,11 @@ namespace unglitch
             buffer[k++] = right[i];
         }
 
-        WriteData(&buffer.front(), 2 * sizeof(float) * length);
+        WriteData(buffer.data(), 2 * sizeof(float) * length);
+
+        // Remove 'length' samples from both 'left' and 'right'.
+        Consume(left, length);
+        Consume(right, length);
     }
 
     void AudioWriter::WriteData(const void *data, size_t nbytes)
@@ -364,21 +384,85 @@ namespace unglitch
             throw Error("Error writing to file " + outFileName);
     }
 
-    GlitchFilter::GlitchFilter(int _maxGlitchSamples, float _threshold)
+    void Consume(FloatVector &buffer, int nsamples)
+    {
+        const int length = static_cast<int>(buffer.size());
+
+        if (nsamples > length)
+            throw Error("Attempt to consume more data than buffer contains!");
+
+        for (int i=0; i + nsamples < length; ++i)
+            buffer[i] = buffer[i + nsamples];
+
+        buffer.resize(static_cast<size_t>(length - nsamples));
+    }
+
+    GlitchFilter::GlitchFilter(int _maxGlitchSamples, int _gapSamples, float _threshold)
         : maxGlitchSamples(_maxGlitchSamples)
+        , gapSamples(_gapSamples)
         , threshold(_threshold)
+        , inGlitch(false)
+        , quietSampleCount(0)
     {        
     }
 
     void GlitchFilter::FixGlitches(const FloatVector& inBuffer, FloatVector& outBuffer)
     {        
-        (void)inBuffer;
-        (void)outBuffer;
+        // State machine, processing one sample at a time.
+        for (float x : inBuffer)
+        {
+            float ax = std::abs(x);
+
+            if (!inGlitch && (ax > threshold))
+            {
+                inGlitch = true;
+                peak = ax;
+                quietSampleCount = 0;
+            }
+
+            if (inGlitch)
+            {
+                glitch.push_back(x);
+                if (ax > threshold)
+                {
+                    quietSampleCount = 0;
+                    if (ax > peak)
+                        peak = ax;
+                }
+                else if (++quietSampleCount >= gapSamples)
+                    Flush(outBuffer);
+            }
+            else
+            {
+                outBuffer.push_back(x);
+            }
+        }
     }
 
     void GlitchFilter::Flush(FloatVector& outBuffer)
     {        
-        (void)outBuffer;
+        if (inGlitch)
+        {
+            // Leaving the glitch state.
+            inGlitch = false;
+
+            // Calculate glitch attentuation factor.
+            float atten = threshold / peak;
+
+            // Make the glitchy part of the glitch buffer quieter.
+            int glitchSampleCount = static_cast<int>(glitch.size()) - quietSampleCount;
+            for (int i=0; i < glitchSampleCount; ++i)
+                glitch[i] *= atten;
+
+            // Append the corrected glitch buffer to the output buffer.
+            for (float g : glitch)
+                outBuffer.push_back(g);
+
+            // Empty out the glitch buffer so it is ready for another glitch.
+            glitch.clear();
+
+            std::cout << "GlitchFilter: fixed " << glitchSampleCount << " samples." << std::endl;
+        }
     }
 }
 
