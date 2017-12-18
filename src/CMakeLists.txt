@@ -7,4 +7,4 @@ add_executable(unglitch
     ${CMAKE_SOURCE_DIR}/src/tinyxml2.cpp
 )
 
-install(TARGETS unglitch DESTINATION ${CMAKE_SOURCE_DIR}/bin)
+install(TARGETS unglitch DESTINATION ${CMAKE_SOURCE_DIR}/bin/${CMAKE_BUILD_TYPE})

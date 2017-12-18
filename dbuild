@@ -1,5 +1,5 @@
 #!/bin/bash
-mkdir -p compile
-pushd compile > /dev/null
+mkdir -p debug
+pushd debug > /dev/null
 cmake -DCMAKE_BUILD_TYPE=Debug .. && make && make install
 popd

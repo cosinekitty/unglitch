@@ -36,7 +36,8 @@ CMakeFiles
 CMakeCache.txt
 Makefile
 *.cmake
-compile/
+debug/
+release/
 bin/
 
 # Visual Studio Code
