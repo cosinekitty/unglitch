@@ -213,13 +213,10 @@ namespace unglitch
             AudioReader leftReader(BlockFileName(leftBlock.Filename()));
             AudioReader rightReader(BlockFileName(rightBlock.Filename()));
 
-            if (static_cast<long>(leftBuffer.size()) < leftBlock.Length())
-                leftBuffer.resize(leftBlock.Length());
-
-            if (static_cast<long>(rightBuffer.size()) < rightBlock.Length())
-                rightBuffer.resize(rightBlock.Length());
-
+            leftBuffer.resize(leftBlock.Length());
             leftReader.Read(leftBuffer.data(), leftBlock.Length());
+
+            rightBuffer.resize(rightBlock.Length());
             rightReader.Read(rightBuffer.data(), rightBlock.Length());
 
             leftFilter.FixGlitches(leftBuffer, leftCleaned);
@@ -235,6 +232,7 @@ namespace unglitch
         if (leftCleaned.size() != rightCleaned.size())
             throw Error("Bug detected: post-flush left and right channel lengths do not match!");
 
+        cout << "Flushing " << leftCleaned.size() << " samples." << endl;
         writer.WriteStereo(leftCleaned, rightCleaned);
     }
 
@@ -311,9 +309,8 @@ namespace unglitch
 
     void AudioReader::Read(float *buffer, int length)
     {
-        int bytesWanted = sizeof(float) * length;
-        int bytesRead = fread(buffer, 1, bytesWanted, infile);
-        if (bytesRead != bytesWanted)
+        int nread = fread(buffer, sizeof(float), length, infile);
+        if (nread != length)
             throw Error("Could not read desired number of bytes from input file " + filename);
     }
 
@@ -396,6 +393,9 @@ namespace unglitch
             buffer[i] = buffer[i + nsamples];
 
         buffer.resize(static_cast<size_t>(length - nsamples));
+
+        if (static_cast<int>(buffer.size()) != (length - nsamples))
+            throw Error("Unexpected buffer length at end of Consume()");
     }
 
     GlitchFilter::GlitchFilter(int _minGlitchSamples, int _maxGlitchSamples, int _gapSamples, float _threshold)

@@ -99,6 +99,7 @@ namespace unglitch
         ~AudioReader();
 
         void Read(float *buffer, int length);
+        const std::string& Filename() const { return filename; }
 
     private:
         static uint32_t DecodeInt(const char *buffer, int offset);
