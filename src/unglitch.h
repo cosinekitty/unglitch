@@ -204,6 +204,7 @@ namespace unglitch
     private:
         long position;
         long glitchStartSample;
+        int glitchCount;
         AudioWriter& writer;
         GlitchChannelState leftState;
         GlitchChannelState rightState;
@@ -218,6 +219,7 @@ namespace unglitch
         GlitchRemover(AudioWriter& _writer)
             : position(0)
             , glitchStartSample(0)
+            , glitchCount(0)
             , writer(_writer)
             {}
 

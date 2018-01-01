@@ -434,7 +434,7 @@ namespace unglitch
         case ChunkStatus::Keep:
             if (!chunklist.empty())
             {
-                cout << "Discarding " << ChunkListSampleCount() << " samples at " << TimeStamp(glitchStartSample) << endl;
+                cout << ++glitchCount << ". Discarding " << ChunkListSampleCount() << " samples at " << TimeStamp(glitchStartSample) << endl;
                 chunklist.clear();
             }
             writer.WriteChunk(chunk);
