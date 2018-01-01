@@ -211,9 +211,8 @@ namespace unglitch
         std::deque<Chunk> chunklist;
         Chunk partial;
 
-        static const int ChunkSamples = 500;
+        static const int ChunkSamples = 800;
         static const int MaxGlitchChunks = 4;
-        static const int WindowChunks = 1 + MaxGlitchChunks + 1;
 
     public:
         GlitchRemover(AudioWriter& _writer)
