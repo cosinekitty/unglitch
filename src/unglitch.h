@@ -211,8 +211,9 @@ namespace unglitch
         std::deque<Chunk> chunklist;
         Chunk partial;
 
-        static const int ChunkSamples = 800;
-        static const int MaxGlitchChunks = 4;
+        static const int ChunkSamples = 1000;
+        static const int MaxGlitchChunks = 3;
+        static const int CrossFadeSamples = 250;
 
     public:
         GlitchRemover(AudioWriter& _writer)
@@ -237,6 +238,7 @@ namespace unglitch
             ChunkStatus &status);
 
         int ChunkListSampleCount() const;
+        void CrossFade();
     };
 }
 

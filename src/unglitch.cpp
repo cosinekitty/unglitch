@@ -435,7 +435,7 @@ namespace unglitch
             if (!chunklist.empty())
             {
                 cout << ++glitchCount << ". Discarding " << ChunkListSampleCount() << " samples at " << TimeStamp(glitchStartSample) << endl;
-                chunklist.clear();
+                CrossFade();
             }
             writer.WriteChunk(chunk);
             break;
@@ -443,6 +443,41 @@ namespace unglitch
         default:
             throw Error("Invalid chunk.status");
         }
+    }
+
+    void GlitchRemover::CrossFade()
+    {
+        if (chunklist.empty())
+            return;
+
+        // Keep the first few samples of the first bad chunk (fading out)
+        // and the last few samples of the last bad chunk (fading in).
+        // This eliminates an abrupt popping sound for the audio we are removing.
+        // Note that the first and last bad chunks may be the same chunk.
+
+        Chunk &first = chunklist.front();
+        Chunk &last = chunklist.back();
+
+        if (first.Length() != ChunkSamples)
+            throw Error("CrossFade: first chunk is wrong length.");
+
+        if (last.Length() != ChunkSamples)
+            throw Error("CrossFade: second chunk is wrong length.");
+
+        int k = ChunkSamples - CrossFadeSamples;
+        for (int i=0; i < CrossFadeSamples; ++i)
+        {
+            float fadeIn = static_cast<float>(i) / static_cast<float>(CrossFadeSamples-1);
+            float fadeOut = 1.0f - fadeIn;
+            first.left[i] = fadeOut*first.left[i] + fadeIn*last.left[i+k];
+            first.right[i] = fadeOut*first.right[i] + fadeIn*last.right[i+k];
+        }
+
+        first.left.resize(CrossFadeSamples);
+        first.right.resize(CrossFadeSamples);
+
+        writer.WriteStereo(first.left, first.right);
+        chunklist.clear();
     }
 
     void GlitchRemover::ProcessChunkChannel(
