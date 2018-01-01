@@ -110,6 +110,7 @@ namespace unglitch
         Unknown,
         Keep,
         Discard,
+        CancelGlitch,
     };
 
     struct Chunk
@@ -227,8 +228,7 @@ namespace unglitch
             GlitchChannelState &state, 
             const FloatVector &first, 
             const FloatVector &second,
-            ChunkStatus &status,
-            bool &cancel);
+            ChunkStatus &status);
     };
 }
 

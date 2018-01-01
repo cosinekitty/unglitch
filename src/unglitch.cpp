@@ -409,30 +409,35 @@ namespace unglitch
         // If we were not in a glitch and everything still looks fine,
         // just write this chunk to the output and keep going.
 
-        bool cancel = false;
         chunk.status = ChunkStatus::Keep;
 
-        ProcessChunkChannel(leftState, chunk.left, chunk.right, chunk.status, cancel);
-        ProcessChunkChannel(rightState, chunk.right, chunk.left, chunk.status, cancel);
+        ProcessChunkChannel(leftState, chunk.left, chunk.right, chunk.status);
+        ProcessChunkChannel(rightState, chunk.right, chunk.left, chunk.status);
 
-        if (cancel)
-            Flush();
-
-        if (chunk.status == ChunkStatus::Keep)
+        switch (chunk.status)
         {
+        case ChunkStatus::Discard:
+            chunklist.push_back(chunk);
+            break;
+
+        case ChunkStatus::CancelGlitch:
+            Flush();
+            // fall through
+        case ChunkStatus::Keep:
             chunklist.clear();
             writer.WriteChunk(chunk);
+            break;
+
+        default:
+            throw Error("Invalid chunk.status");
         }
-        else
-            chunklist.push_back(chunk);
     }
 
     void GlitchRemover::ProcessChunkChannel(
         GlitchChannelState &state, 
         const FloatVector &first, 
         const FloatVector &second,
-        ChunkStatus &status,
-        bool &cancel)
+        ChunkStatus &status)
     {
         // There are 4 possible cases:
         // 1. (most common) start in good state, end in good state.
@@ -475,7 +480,7 @@ namespace unglitch
                     // Glitch is too long. Cancel glitch.
                     state.runLength = 0;
                     state.prevPeak = peak1;
-                    cancel = true;
+                    status = ChunkStatus::CancelGlitch;
                 }
             }
             else
