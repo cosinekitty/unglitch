@@ -375,6 +375,7 @@ namespace unglitch
         // There may be a partial chunk left over from the last iteration.
         // If so, extend it to ChunkSamples in length.
         int length = static_cast<int>(left.size());
+
         int offset = 0;
         if (partial.Length() > 0)
         {
@@ -382,26 +383,31 @@ namespace unglitch
             partial.Extend(left, right, 0, extra);
             
             if (partial.Length() < ChunkSamples)
-                return;     // we ran out of data this time... nothing left to do
+                goto done;     // we ran out of data this time... nothing left to do
 
-            ProcessChunk(partial);
+            ProcessChunk(position - extra, partial);
             partial.Clear();
             offset += extra;
         }
 
         while (offset + ChunkSamples <= length)
         {
-            ProcessChunk(Chunk(left, right, offset, ChunkSamples));
+            ProcessChunk(position + offset, Chunk(left, right, offset, ChunkSamples));
             offset += ChunkSamples;
         }
 
         // There may be a partial chunk left over from this iteration.
         if (offset < length)
             partial = Chunk(left, right, offset, length-offset);
+
+    done:
+        position += length;
     }
 
-    void GlitchRemover::ProcessChunk(Chunk chunk)
+    void GlitchRemover::ProcessChunk(long sample, Chunk chunk)
     {
+        using namespace std;
+
         // Called once for every new chunk.
         // If we are already in a glitch in either channel, check for end of glitch.
         // A glitch can end when we exceed maximum chunk count for a glitch,
@@ -411,8 +417,8 @@ namespace unglitch
 
         chunk.status = ChunkStatus::Keep;
 
-        ProcessChunkChannel(leftState, chunk.left, chunk.right, chunk.status);
-        ProcessChunkChannel(rightState, chunk.right, chunk.left, chunk.status);
+        ProcessChunkChannel(sample, leftState, chunk.left, chunk.right, chunk.status);
+        ProcessChunkChannel(sample, rightState, chunk.right, chunk.left, chunk.status);
 
         switch (chunk.status)
         {
@@ -422,9 +428,15 @@ namespace unglitch
 
         case ChunkStatus::CancelGlitch:
             Flush();
-            // fall through
+            writer.WriteChunk(chunk);
+            break;
+
         case ChunkStatus::Keep:
-            chunklist.clear();
+            if (!chunklist.empty())
+            {
+                cout << "Discarding " << ChunkListSampleCount() << " samples at " << TimeStamp(glitchStartSample) << endl;
+                chunklist.clear();
+            }
             writer.WriteChunk(chunk);
             break;
 
@@ -434,6 +446,7 @@ namespace unglitch
     }
 
     void GlitchRemover::ProcessChunkChannel(
+        long sample,
         GlitchChannelState &state, 
         const FloatVector &first, 
         const FloatVector &second,
@@ -458,6 +471,7 @@ namespace unglitch
                 // Entering a glitch. Keep prevPeak value as-is.
                 state.runLength = 1;
                 status = ChunkStatus::Discard;
+                glitchStartSample = sample;
             }
             else
             {
@@ -516,6 +530,14 @@ namespace unglitch
             peak = std::max(peak, std::abs(x));
 
         return peak;
+    }
+
+    int GlitchRemover::ChunkListSampleCount() const
+    {
+        int sum = 0;
+        for (const Chunk &chunk : chunklist)
+            sum += chunk.Length();
+        return sum;
     }
 }
 

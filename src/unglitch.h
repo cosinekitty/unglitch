@@ -202,6 +202,8 @@ namespace unglitch
     class GlitchRemover
     {
     private:
+        long position;
+        long glitchStartSample;
         AudioWriter& writer;
         GlitchChannelState leftState;
         GlitchChannelState rightState;
@@ -214,7 +216,9 @@ namespace unglitch
 
     public:
         GlitchRemover(AudioWriter& _writer)
-            : writer(_writer)
+            : position(0)
+            , glitchStartSample(0)
+            , writer(_writer)
             {}
 
         void Fix(FloatVector& left, FloatVector& right);
@@ -222,13 +226,16 @@ namespace unglitch
 
     private:
         static float PeakValue(const FloatVector& vect);
-        void ProcessChunk(Chunk chunk);
+        void ProcessChunk(long sample, Chunk chunk);
 
         void ProcessChunkChannel(
+            long sample,
             GlitchChannelState &state, 
             const FloatVector &first, 
             const FloatVector &second,
             ChunkStatus &status);
+
+        int ChunkListSampleCount() const;
     };
 }
 
