@@ -493,10 +493,11 @@ namespace unglitch
         // 3. stay in glitch state
         // 4. end glitch state (no more glitch, or glitch too long)
 
-        const float BadJump = 0.1f;
+        const float Threshold = 0.27f;
+        const float BadJump = 0.08f;
         float peak1 = PeakValue(first);
         float peak2 = PeakValue(second);
-        bool inglitch = (peak1 - state.prevPeak > BadJump) && (peak1 - peak2 > BadJump);
+        bool inglitch = (peak1 > Threshold) && (peak1 - state.prevPeak > BadJump) && (peak1 - peak2 > BadJump);
 
         if (state.runLength == 0)
         {
