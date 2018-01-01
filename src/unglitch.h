@@ -11,6 +11,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <deque>
 #include <vector>
 
 #include "tinyxml2.h"
@@ -70,7 +71,6 @@ namespace unglitch
         void Parse(tinyxml2::XMLElement *trackElem);
         int NumBlocks() const { return static_cast<int>(blockList.size()); }
         WaveBlock& Block(int index) { return blockList.at(index); }
-        float Threshold() const;
     };
 
     class Project
@@ -105,7 +105,65 @@ namespace unglitch
         static uint32_t DecodeInt(const char *buffer, int offset);
     };
 
-    void Consume(FloatVector &buffer, int nsamples);
+    enum class ChunkStatus
+    {
+        Unknown,
+        Keep,
+        Discard,
+    };
+
+    struct Chunk
+    {
+        ChunkStatus status;
+        FloatVector left;
+        FloatVector right;
+
+        Chunk()
+            : status(ChunkStatus::Unknown)
+            {}
+
+        Chunk(const FloatVector& _left, const FloatVector& _right, int offset, int length)
+            : status(ChunkStatus::Unknown)
+            , left(&_left[offset], &_left[offset + length])
+            , right(&_right[offset], &_right[offset + length])
+            {}
+
+        void Clear()
+        {
+            status = ChunkStatus::Unknown;
+            left.clear();
+            right.clear();
+        }
+
+        int Length() const
+        {
+            return static_cast<int>(left.size());
+        }
+
+        bool IsResolved() const
+        {
+            return status != ChunkStatus::Unknown;
+        }
+
+        FloatVector& First(bool flip) 
+        {
+            return flip ? right : left;
+        }
+
+        const FloatVector& Second(bool flip) const
+        {
+            return flip ? left : right;
+        }
+
+        void Extend(const FloatVector& _left, const FloatVector& _right, int offset, int extra)
+        {
+            for (int i=0; i < extra; ++i)
+            {
+                left.push_back(_left[offset+i]);
+                right.push_back(_right[offset+i]);
+            }
+        }
+    };
 
     class AudioWriter   // writes .au files
     {
@@ -118,30 +176,59 @@ namespace unglitch
         AudioWriter(std::string _outFileName, int _rate, int _channels);
         ~AudioWriter();
 
-        void WriteStereo(FloatVector& left, FloatVector& right);
+        void WriteStereo(const FloatVector& left, const FloatVector& right);
+
+        void WriteChunk(const Chunk &chunk)
+        {
+            WriteStereo(chunk.left, chunk.right);
+        }
 
     private:
         void WriteData(const void *data, size_t nbytes);
     };
 
-    class GlitchFilter
+    struct GlitchChannelState
+    {
+        int runLength;
+        float prevPeak;
+
+        GlitchChannelState()
+            : runLength(0)
+            , prevPeak(0.0f)
+            {}
+    };
+
+    class GlitchRemover
     {
     private:
-        const int minGlitchSamples;   // shortest run of large sample values to fix
-        const int maxGlitchSamples;   // maximum number of consecutive samples to fix
-        const int gapSamples;         // number of quiet samples after a glitch to trigger ending the glitch
-        float threshold;              // absolute value above which we consider a glitch
-        bool inGlitch;
-        int quietSampleCount;
-        float peak;
-        FloatVector glitch;           // holds raw samples for a glitch in progress
-        long sampleOffset;
-        long glitchOffset;
+        AudioWriter& writer;
+        GlitchChannelState leftState;
+        GlitchChannelState rightState;
+        std::deque<Chunk> chunklist;
+        Chunk partial;
+
+        static const int ChunkSamples = 500;
+        static const int MaxGlitchChunks = 4;
+        static const int WindowChunks = 1 + MaxGlitchChunks + 1;
 
     public:
-        GlitchFilter(int _minGlitchSamples, int _maxGlitchSamples, int _gapSamples, float _threshold);
-        void FixGlitches(const FloatVector& inBuffer, FloatVector& outBuffer);
-        void Flush(FloatVector& outBuffer);
+        GlitchRemover(AudioWriter& _writer)
+            : writer(_writer)
+            {}
+
+        void Fix(FloatVector& left, FloatVector& right);
+        void Flush();
+
+    private:
+        static float PeakValue(const FloatVector& vect);
+        void ProcessChunk(Chunk chunk);
+
+        void ProcessChunkChannel(
+            GlitchChannelState &state, 
+            const FloatVector &first, 
+            const FloatVector &second,
+            ChunkStatus &status,
+            bool &cancel);
     };
 }
 

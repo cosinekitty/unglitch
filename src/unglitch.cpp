@@ -94,38 +94,6 @@ namespace unglitch
         }
     }
 
-    float WaveTrack::Threshold() const
-    {
-        // Find the smallest non-negative value that includes the vast majority of the block peaks.
-        // For simplicity we assume peak values are always in the range [0.001 .. 1.000]
-        // and we keep a histogram of bands rounded up to the next higher increment of 0.001.
-        const int NUMBANDS = 1000;
-        std::vector<int> histogram(1 + NUMBANDS);
-
-        for (const WaveBlock& block : blockList)
-        {
-            float peak = block.Peak();
-            float fband = ceil(peak * NUMBANDS);
-            if (fband < 0 || fband > NUMBANDS)
-                throw Error("Invalid fband = " + std::to_string(fband));
-
-            int band = static_cast<int>(fband);
-            ++histogram[band];
-        }
-
-        const float KeepRatio = 0.98;
-        int sum = 0;
-        for (int band=0; band <= NUMBANDS; ++band)
-        {
-            sum += histogram[band];
-            float ratio = static_cast<float>(sum) / static_cast<float>(blockList.size());
-            if (ratio >= KeepRatio)
-                return static_cast<float>(band) / static_cast<float>(NUMBANDS);
-        }
-
-        throw Error("Could not find threshold");
-    }
-
     void Project::InitDataPath(const char *inFileName)
     {
         using namespace std;
@@ -181,20 +149,12 @@ namespace unglitch
         if (nblocks != rightTrack.NumBlocks())
             throw Error("Left and right tracks have different number of blocks.");
 
-        float threshold = std::max(leftTrack.Threshold(), rightTrack.Threshold());
-        cout << "Threshold = " << threshold << endl;
         AudioWriter writer(outFileName, 44100, 2);
 
-        const int minGlitchSamples = 50;
-        const int maxGlitchSamples = 2000;
-        const int gapSamples = 1000;
-        GlitchFilter leftFilter(minGlitchSamples, maxGlitchSamples, gapSamples, threshold);
-        GlitchFilter rightFilter(minGlitchSamples, maxGlitchSamples, gapSamples, threshold);
+        GlitchRemover remover(writer);
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
-        FloatVector leftCleaned;
-        FloatVector rightCleaned;
         long position = 0;
         for (int b=0; b < nblocks; ++b)
         {
@@ -219,21 +179,12 @@ namespace unglitch
             rightBuffer.resize(rightBlock.Length());
             rightReader.Read(rightBuffer.data(), rightBlock.Length());
 
-            leftFilter.FixGlitches(leftBuffer, leftCleaned);
-            rightFilter.FixGlitches(rightBuffer, rightCleaned);
-
-            writer.WriteStereo(leftCleaned, rightCleaned);
+            remover.Fix(leftBuffer, rightBuffer);
 
             position += leftBlock.Length();
         }
 
-        leftFilter.Flush(leftCleaned);
-        rightFilter.Flush(rightCleaned);
-        if (leftCleaned.size() != rightCleaned.size())
-            throw Error("Bug detected: post-flush left and right channel lengths do not match!");
-
-        cout << "Flushing " << leftCleaned.size() << " samples." << endl;
-        writer.WriteStereo(leftCleaned, rightCleaned);
+        remover.Flush();
     }
 
     std::string Project::BlockFileName(const std::string& fn) const
@@ -353,11 +304,12 @@ namespace unglitch
         }
     }
 
-    void AudioWriter::WriteStereo(FloatVector& left, FloatVector& right)
+    void AudioWriter::WriteStereo(const FloatVector& left, const FloatVector& right)
     {
-        const int leftLength = left.size();
-        const int rightLength = right.size();
-        const int length = std::min(leftLength, rightLength);
+        if (left.size() != right.size())
+            throw Error("WriteStereo: buffer size mismatch.");
+
+        const int length = static_cast<int>(left.size());
 
         // Merge and interleave the sample data from both input channels.
         buffer.resize(2 * length);
@@ -369,10 +321,6 @@ namespace unglitch
         }
 
         WriteData(buffer.data(), 2 * sizeof(float) * length);
-
-        // Remove 'length' samples from both 'left' and 'right'.
-        Consume(left, length);
-        Consume(right, length);
     }
 
     void AudioWriter::WriteData(const void *data, size_t nbytes)
@@ -380,72 +328,6 @@ namespace unglitch
         size_t written = fwrite(data, 1, nbytes, outfile);
         if (written != nbytes)
             throw Error("Error writing to file " + outFileName);
-    }
-
-    void Consume(FloatVector &buffer, int nsamples)
-    {
-        const int length = static_cast<int>(buffer.size());
-
-        if (nsamples > length)
-            throw Error("Attempt to consume more data than buffer contains!");
-
-        for (int i=0; i + nsamples < length; ++i)
-            buffer[i] = buffer[i + nsamples];
-
-        buffer.resize(static_cast<size_t>(length - nsamples));
-
-        if (static_cast<int>(buffer.size()) != (length - nsamples))
-            throw Error("Unexpected buffer length at end of Consume()");
-    }
-
-    GlitchFilter::GlitchFilter(int _minGlitchSamples, int _maxGlitchSamples, int _gapSamples, float _threshold)
-        : minGlitchSamples(_minGlitchSamples)
-        , maxGlitchSamples(_maxGlitchSamples)
-        , gapSamples(_gapSamples)
-        , threshold(_threshold)
-        , inGlitch(false)
-        , quietSampleCount(0)
-        , peak(0.0f)
-        , glitch()
-        , sampleOffset(0L)
-        , glitchOffset(0L)
-    {        
-    }
-
-    void GlitchFilter::FixGlitches(const FloatVector& inBuffer, FloatVector& outBuffer)
-    {        
-        // State machine, processing one sample at a time.
-        for (float x : inBuffer)
-        {
-            float ax = std::abs(x);
-
-            if (!inGlitch && (ax > threshold))
-            {
-                inGlitch = true;
-                peak = ax;
-                quietSampleCount = 0;
-                glitchOffset = sampleOffset;
-            }
-
-            if (inGlitch)
-            {
-                glitch.push_back(x);
-                if (ax > threshold)
-                {
-                    quietSampleCount = 0;
-                    if (ax > peak)
-                        peak = ax;
-                }
-                else if (++quietSampleCount >= gapSamples)
-                    Flush(outBuffer);
-            }
-            else
-            {
-                outBuffer.push_back(x);
-            }
-
-            ++sampleOffset;
-        }
     }
 
     std::string Format(long value, int width)
@@ -480,33 +362,155 @@ namespace unglitch
             Format(millis, 3);
     }
 
-    void GlitchFilter::Flush(FloatVector& outBuffer)
-    {        
-        if (inGlitch)
+    void GlitchRemover::Fix(FloatVector& left, FloatVector& right)
+    {
+        // Break both channels into chunks of ChunkSamples samples.
+        // Characterize the chunk by its max absolute value.
+        // Crudest algorithm: optionally exclude entire run of 1..MaxGlitchChunks.
+        // Improvement: on outermost chunks in a run to be excluded,
+        // find exact point in middle to start/stop chopping first/last.
+        // Improvement: after removing a section, cross-fade to eliminate popping.
+
+        // Convert flat (left, right) buffers into chunks.        
+        // There may be a partial chunk left over from the last iteration.
+        // If so, extend it to ChunkSamples in length.
+        int length = static_cast<int>(left.size());
+        int offset = 0;
+        if (partial.Length() > 0)
         {
-            // Leaving the glitch state.
-            inGlitch = false;
+            int extra = std::min(ChunkSamples - partial.Length(), length);
+            partial.Extend(left, right, 0, extra);
+            
+            if (partial.Length() < ChunkSamples)
+                return;     // we ran out of data this time... nothing left to do
 
-            int glitchSampleCount = static_cast<int>(glitch.size()) - quietSampleCount;
-            if (glitchSampleCount >= minGlitchSamples && glitchSampleCount <= maxGlitchSamples)
-            {
-                std::cout << "GlitchFilter: fixing " << glitchSampleCount << " samples at " << TimeStamp(glitchOffset) << std::endl;
-
-                // Calculate glitch attentuation factor.
-                float atten = 0.5 * (threshold / peak);
-
-                // Make the glitchy part of the glitch buffer quieter.
-                for (int i=0; i < glitchSampleCount; ++i)
-                    glitch[i] *= atten;
-            }
-
-            // Append the corrected glitch buffer to the output buffer.
-            for (float g : glitch)
-                outBuffer.push_back(g);
-
-            // Empty out the glitch buffer so it is ready for another glitch.
-            glitch.clear();
+            ProcessChunk(partial);
+            partial.Clear();
+            offset += extra;
         }
+
+        while (offset + ChunkSamples <= length)
+        {
+            ProcessChunk(Chunk(left, right, offset, ChunkSamples));
+            offset += ChunkSamples;
+        }
+
+        // There may be a partial chunk left over from this iteration.
+        if (offset < length)
+            partial = Chunk(left, right, offset, length-offset);
+    }
+
+    void GlitchRemover::ProcessChunk(Chunk chunk)
+    {
+        // Called once for every new chunk.
+        // If we are already in a glitch in either channel, check for end of glitch.
+        // A glitch can end when we exceed maximum chunk count for a glitch,
+        // or when it looks like the glitch is naturally over.
+        // If we were not in a glitch and everything still looks fine,
+        // just write this chunk to the output and keep going.
+
+        bool cancel = false;
+        chunk.status = ChunkStatus::Keep;
+
+        ProcessChunkChannel(leftState, chunk.left, chunk.right, chunk.status, cancel);
+        ProcessChunkChannel(rightState, chunk.right, chunk.left, chunk.status, cancel);
+
+        if (cancel)
+            Flush();
+
+        if (chunk.status == ChunkStatus::Keep)
+        {
+            chunklist.clear();
+            writer.WriteChunk(chunk);
+        }
+        else
+            chunklist.push_back(chunk);
+    }
+
+    void GlitchRemover::ProcessChunkChannel(
+        GlitchChannelState &state, 
+        const FloatVector &first, 
+        const FloatVector &second,
+        ChunkStatus &status,
+        bool &cancel)
+    {
+        // There are 4 possible cases:
+        // 1. (most common) start in good state, end in good state.
+        // 2. go from good state to glitch state
+        // 3. stay in glitch state
+        // 4. end glitch state (no more glitch, or glitch too long)
+
+        const float BadJump = 0.05f;
+        float peak1 = PeakValue(first);
+        float peak2 = PeakValue(second);
+        bool inglitch = (peak1 - state.prevPeak > BadJump) && (peak1 - peak2 > BadJump);
+
+        if (state.runLength == 0)
+        {
+            // Starting in good state.
+            if (inglitch)
+            {
+                // Entering a glitch. Keep prevPeak value as-is.
+                state.runLength = 1;
+                status = ChunkStatus::Discard;
+            }
+            else
+            {
+                // Staying in good state. Update prevPeak.
+                state.prevPeak = peak1;
+            }
+        }
+        else
+        {
+            // In bad state. Do we end the bad state now or keep going?
+            if (inglitch)
+            {
+                if (++state.runLength <= MaxGlitchChunks)
+                {
+                    // Staying in glitch state.
+                    status = ChunkStatus::Discard;
+                }
+                else
+                {
+                    // Glitch is too long. Cancel glitch.
+                    state.runLength = 0;
+                    state.prevPeak = peak1;
+                    cancel = true;
+                }
+            }
+            else
+            {
+                // Leaving glitch state.
+                state.prevPeak = peak1;
+                state.runLength = 0;
+            }
+        }
+    }
+
+    void GlitchRemover::Flush()
+    {
+        // Write any chunks remaining in the chunklist.
+        while (!chunklist.empty())
+        {
+            writer.WriteChunk(chunklist.front());
+            chunklist.pop_front();
+        }
+
+        // Write partial chunk if it contains any data.
+        if (partial.Length() > 0)
+        {
+            writer.WriteChunk(partial);
+            partial.Clear();
+        }
+    }
+
+    float GlitchRemover::PeakValue(const FloatVector& vect)
+    {
+        float peak = 0.0f;
+        for (float x : vect)
+            peak = std::max(peak, std::abs(x));
+
+        return peak;
     }
 }
 
