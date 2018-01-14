@@ -582,20 +582,41 @@ int main(int argc, const char *argv[])
     using namespace std;
     using namespace unglitch;
 
-    if (argc != 3)
+    string inAudacityProjectFileName;
+    string outAudioFileName;
+
+    switch (argc)
     {
-        cerr << "USAGE: unglitch infile.aup outfile.au" << endl;
+    case 2:
+        inAudacityProjectFileName = string(argv[1]) + ".aup";
+        outAudioFileName = string("cleaned-") + argv[1] + ".au";
+        break;
+
+    case 3:
+        inAudacityProjectFileName = argv[1];
+        outAudioFileName = argv[2];
+        break;
+
+    default:
+        cerr << 
+            "USAGE:\n"
+            "\n"
+            "    unglitch infile.aup outfile.au\n"
+            "        Reads from Audacity project infile.aup and writes to outfile.au.\n"
+            "\n"
+            "    unglitch projname\n"
+            "        Same as: unglitch projname.aud cleaned-projname.au\n"
+            << endl;
+
         return 1;
     }
 
-    const char *inAudacityProjectFileName = argv[1];
-    const char *outAudioFileName = argv[2];
     try
     {
         Project project;
-        project.Load(inAudacityProjectFileName);
+        project.Load(inAudacityProjectFileName.c_str());
         cout << "Loaded project." << endl;
-        project.Convert(outAudioFileName);
+        project.Convert(outAudioFileName.c_str());
         cout << "Finished converting audio." << endl;
     }
     catch (const Error &error)
