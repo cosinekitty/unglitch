@@ -133,9 +133,67 @@ namespace unglitch
         }
     }
 
+    Project::DcBias Project::FindBias() const
+    {
+        // Measure the DC offset in both channels.
+        if (channelList.size() != 2)
+            throw Error("Input must be stereo.");
+
+        const WaveTrack &leftTrack = channelList[0];
+        const WaveTrack &rightTrack = channelList[1];
+
+        const int nblocks = leftTrack.NumBlocks();
+        if (nblocks != rightTrack.NumBlocks())
+            throw Error("Left and right tracks have different number of blocks.");
+
+        double leftSum = 0.0;
+        double rightSum = 0.0;
+        long position = 0;
+        FloatVector leftBuffer;
+        FloatVector rightBuffer;
+        for (int b=0; b < nblocks; ++b)
+        {
+            const WaveBlock& leftBlock = leftTrack.Block(b);
+            const WaveBlock& rightBlock = rightTrack.Block(b);            
+
+            if (leftBlock.Start() != position)
+                throw Error("Left block not at expected position.");
+
+            if (rightBlock.Start() != position)
+                throw Error("Right block not at expected position.");
+
+            const long length = leftBlock.Length();
+            if (length != rightBlock.Length())
+                throw Error("Left and right blocks have different lengths.");            
+
+            AudioReader leftReader(BlockFileName(leftBlock.Filename()));
+            AudioReader rightReader(BlockFileName(rightBlock.Filename()));
+
+            leftBuffer.resize(length);
+            leftReader.Read(leftBuffer.data(), length);
+
+            rightBuffer.resize(length);
+            rightReader.Read(rightBuffer.data(), length);
+
+            for (float data : leftBuffer)
+                leftSum += data;
+
+            for (float data : rightBuffer)
+                rightSum += data;
+
+            position += length;
+        }
+
+        return DcBias(leftSum/position, rightSum/position);
+    }
+
     void Project::Convert(const char *outFileName)
     {
         using namespace std;
+
+        cout << "Finding DC bias..." << endl;
+        DcBias bias = FindBias();
+        cout << "Bias: left=" << bias.left << ", right=" << bias.right << endl;        
 
         // Convert multiple pairs of single-channel audio into a single stereo audio file.
         // Assume that left and right channes come in equal-size blocks.
@@ -158,8 +216,8 @@ namespace unglitch
         long position = 0;
         for (int b=0; b < nblocks; ++b)
         {
-            WaveBlock& leftBlock = leftTrack.Block(b);
-            WaveBlock& rightBlock = rightTrack.Block(b);            
+            const WaveBlock& leftBlock = leftTrack.Block(b);
+            const WaveBlock& rightBlock = rightTrack.Block(b);            
 
             if (leftBlock.Start() != position)
                 throw Error("Left block not at expected position.");
@@ -178,6 +236,12 @@ namespace unglitch
 
             rightBuffer.resize(rightBlock.Length());
             rightReader.Read(rightBuffer.data(), rightBlock.Length());
+
+            for (float &data : leftBuffer)
+                data -= bias.left;
+
+            for (float &data : rightBuffer)
+                data -= bias.right;
 
             remover.Fix(leftBuffer, rightBuffer);
 

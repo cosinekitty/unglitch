@@ -70,7 +70,7 @@ namespace unglitch
     public:
         void Parse(tinyxml2::XMLElement *trackElem);
         int NumBlocks() const { return static_cast<int>(blockList.size()); }
-        WaveBlock& Block(int index) { return blockList.at(index); }
+        const WaveBlock& Block(int index) const { return blockList.at(index); }
     };
 
     class Project
@@ -79,6 +79,17 @@ namespace unglitch
         std::vector<WaveTrack> channelList;
         std::string dataPath;   // e.g. "/home/don/radio/edit/2017-12-10_data/"
 
+        struct DcBias
+        {
+            float left;
+            float right;
+
+            DcBias(float _left, float _right)
+                : left(_left)
+                , right(_right)
+                {}
+        };
+
     public:
         void Load(const char *inFileName);
         void Convert(const char *outFileName);
@@ -86,6 +97,7 @@ namespace unglitch
     private:
         void InitDataPath(const char *inFileName);
         std::string BlockFileName(const std::string& rawBlockFileName) const;
+        DcBias FindBias() const;
     };
 
     class AudioReader   // reads .au files
