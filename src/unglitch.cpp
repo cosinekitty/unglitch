@@ -258,11 +258,14 @@ namespace unglitch
             if (IsStartingNextProgram(programPosition, leftBuffer, rightBuffer, boundary))
             {
                 // Split buffers into before/after the boundary.
-                cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
                 FloatVector leftBefore = SplitBuffer(leftBuffer, boundary);
                 FloatVector rightBefore = SplitBuffer(rightBuffer, boundary);
                 remover.Fix(leftBefore, rightBefore);
                 remover.Flush();
+                cout << "Removed " << remover.GlitchCount() << " glitches from " << writer.OutFileName() << endl;
+                remover.ResetGlitchCount();
+
+                cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
                 writer.StartNewFile(OutProgramFileName(outFilePrefix, ++hour));
                 programPosition = 0;
             }
@@ -277,6 +280,8 @@ namespace unglitch
         }
 
         remover.Flush();
+        cout << "Removed " << remover.GlitchCount() << " glitches from " << writer.OutFileName() << endl;
+        remover.ResetGlitchCount();
     }
 
     bool Project::IsStartingNextProgram(

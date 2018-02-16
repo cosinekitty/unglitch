@@ -212,6 +212,11 @@ namespace unglitch
 
         void StartNewFile(std::string _outFileName);
 
+        std::string OutFileName() const
+        {
+            return outFileName;
+        }
+
     private:
         void WriteData(const void *data, size_t nbytes);
     };
@@ -253,6 +258,16 @@ namespace unglitch
 
         void Fix(FloatVector& left, FloatVector& right);
         void Flush();
+
+        int GlitchCount() const
+        {
+            return glitchCount;
+        }
+        
+        void ResetGlitchCount()
+        {
+            glitchCount = 0;
+        }
 
     private:
         static float PeakValue(const FloatVector& vect);
