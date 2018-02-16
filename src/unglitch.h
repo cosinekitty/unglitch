@@ -70,6 +70,7 @@ namespace unglitch
     public:
         void Parse(tinyxml2::XMLElement *trackElem);
         int NumBlocks() const { return static_cast<int>(blockList.size()); }
+        long NumSamples() const { return nsamples; }
         const WaveBlock& Block(int index) const { return blockList.at(index); }
     };
 
@@ -263,7 +264,7 @@ namespace unglitch
         {
             return glitchCount;
         }
-        
+
         void ResetGlitchCount()
         {
             glitchCount = 0;

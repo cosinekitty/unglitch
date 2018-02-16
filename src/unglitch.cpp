@@ -21,6 +21,8 @@
 
 namespace unglitch
 {
+    const int SamplingRate = 44100;
+
     std::string TimeStamp(long offset);
 
     long NumericAttribute(tinyxml2::XMLElement *elem, const char *name)
@@ -52,7 +54,7 @@ namespace unglitch
 
         // extract sample rate attribute from <wavetrack ...>
         rate = NumericAttribute(trackElem, "rate");
-        if (rate != 44100)
+        if (rate != SamplingRate)
             throw Error(string("Unexpected sampling rate ") + to_string(rate));
 
         XMLElement *clipElem = trackElem->FirstChildElement("waveclip");
@@ -64,6 +66,7 @@ namespace unglitch
             throw Error("Cannot find <sequence> inside <waveclip>");
 
         nsamples = NumericAttribute(seqElem, "numsamples");
+        long checkSamples = 0;
 
         for (XMLElement *blockElem = seqElem->FirstChildElement("waveblock"); blockElem; blockElem = blockElem->NextSiblingElement("waveblock"))
         {
@@ -93,7 +96,11 @@ namespace unglitch
             float ymin = FloatAttribute(fileElem, "min");
             float ymax = FloatAttribute(fileElem, "max");
             blockList.push_back(WaveBlock(filename, start, length, ymin, ymax));
+            checkSamples += length;
         }
+
+        if (nsamples != checkSamples)
+            throw Error("WaveTrack::Parse - numsamples does not match sum(len)");
     }
 
     void Project::InitDataPath(const char *inFileName)
@@ -214,8 +221,14 @@ namespace unglitch
         if (nblocks != rightTrack.NumBlocks())
             throw Error("Left and right tracks have different number of blocks.");
 
+        const long nsamples = leftTrack.NumSamples();
+        if (nsamples != rightTrack.NumSamples())
+            throw Error("Left and right tracks have different number of samples.");
+
+        const long MinSplitSamples = 60L * SamplingRate;  // do not split within final minute of audio
+
         int hour = 1;
-        AudioWriter writer(OutProgramFileName(outFilePrefix, hour), 44100, 2);
+        AudioWriter writer(OutProgramFileName(outFilePrefix, hour), SamplingRate, 2);
 
         GlitchRemover remover(writer);
 
@@ -255,7 +268,7 @@ namespace unglitch
             for (float &data : rightBuffer)
                 data -= bias.right;
 
-            if (IsStartingNextProgram(programPosition, leftBuffer, rightBuffer, boundary))
+            if ((nsamples-position > MinSplitSamples) && IsStartingNextProgram(programPosition, leftBuffer, rightBuffer, boundary))
             {
                 // Split buffers into before/after the boundary.
                 FloatVector leftBefore = SplitBuffer(leftBuffer, boundary);
@@ -303,7 +316,7 @@ namespace unglitch
         // somewhere between 58 and 61 minutes into the current program.
         const double minProgramMinutes = 58.0;
         const double maxProgramMinutes = 61.0;
-        const double samplesPerSecond = 44100.0;
+        const double samplesPerSecond = static_cast<double>(SamplingRate);
         const double samplesPerMinute = samplesPerSecond * 60.0;
         double minutesBegin = programPosition / samplesPerMinute;
         double minutesEnd = minutesBegin + (length / samplesPerMinute);
@@ -412,7 +425,7 @@ namespace unglitch
             throw Error("Unsupported data encoding: expected 32-bit IEEE floating point in " + inFileName);
 
         uint32_t rate = DecodeInt(header, 4*4);
-        if (rate != 44100)
+        if (rate != SamplingRate)
             throw Error("Unsupported sampling rate in file " + inFileName);
 
         uint32_t channels = DecodeInt(header, 5*4);
@@ -540,11 +553,9 @@ namespace unglitch
     {
         using namespace std;
 
-        const long rate = 44100L;
-
-        long seconds = offset / rate;
-        offset %= rate;
-        long millis = (offset * 1000L) / rate;
+        long seconds = offset / SamplingRate;
+        offset %= SamplingRate;
+        long millis = (offset * 1000L) / SamplingRate;
         long minutes = seconds / 60L;
         seconds %= 60L;
         long hours = minutes / 60L;
