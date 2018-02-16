@@ -92,12 +92,24 @@ namespace unglitch
 
     public:
         void Load(const char *inFileName);
-        void Convert(const char *outFileName);
+        void Convert(std::string outFilePrefix);
 
     private:
         void InitDataPath(const char *inFileName);
         std::string BlockFileName(const std::string& rawBlockFileName) const;
         DcBias FindBias() const;
+        static std::string OutProgramFileName(std::string prefix, int hour);
+        bool IsStartingNextProgram(long programPosition, const FloatVector& leftBuffer, const FloatVector& rightBuffer, long &boundary) const;
+        FloatVector SplitBuffer(FloatVector& buffer, long offset);
+        static bool Overlap(double a, double b, double x, double y)
+        {
+            return 
+                (a >= x && a <= y) ||
+                (b >= x && b <= y) ||
+                (x >= a && x <= b) ||
+                (y >= a && y <= b)
+            ;
+        }
     };
 
     class AudioReader   // reads .au files
@@ -184,6 +196,8 @@ namespace unglitch
         FILE *outfile;
         std::string outFileName;
         FloatVector buffer;
+        int rate;
+        int channels;
 
     public:
         AudioWriter(std::string _outFileName, int _rate, int _channels);
@@ -195,6 +209,8 @@ namespace unglitch
         {
             WriteStereo(chunk.left, chunk.right);
         }
+
+        void StartNewFile(std::string _outFileName);
 
     private:
         void WriteData(const void *data, size_t nbytes);

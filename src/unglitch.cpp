@@ -21,6 +21,8 @@
 
 namespace unglitch
 {
+    std::string TimeStamp(long offset);
+
     long NumericAttribute(tinyxml2::XMLElement *elem, const char *name)
     {
         using namespace std;
@@ -187,7 +189,12 @@ namespace unglitch
         return DcBias(leftSum/position, rightSum/position);
     }
 
-    void Project::Convert(const char *outFileName)
+    std::string Project::OutProgramFileName(std::string prefix, int hour)
+    {
+        return prefix + "-" + std::to_string(hour) + ".au";
+    }
+
+    void Project::Convert(std::string outFilePrefix)
     {
         using namespace std;
 
@@ -207,13 +214,16 @@ namespace unglitch
         if (nblocks != rightTrack.NumBlocks())
             throw Error("Left and right tracks have different number of blocks.");
 
-        AudioWriter writer(outFileName, 44100, 2);
+        int hour = 1;
+        AudioWriter writer(OutProgramFileName(outFilePrefix, hour), 44100, 2);
 
         GlitchRemover remover(writer);
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
         long position = 0;
+        long boundary = 0;
+        long programPosition = 0;
         for (int b=0; b < nblocks; ++b)
         {
             const WaveBlock& leftBlock = leftTrack.Block(b);
@@ -228,14 +238,16 @@ namespace unglitch
             if (leftBlock.Length() != rightBlock.Length())
                 throw Error("Left and right blocks have different lengths.");            
 
+            const long blockLength = leftBlock.Length();
+
             AudioReader leftReader(BlockFileName(leftBlock.Filename()));
             AudioReader rightReader(BlockFileName(rightBlock.Filename()));
 
-            leftBuffer.resize(leftBlock.Length());
-            leftReader.Read(leftBuffer.data(), leftBlock.Length());
+            leftBuffer.resize(blockLength);
+            leftReader.Read(leftBuffer.data(), blockLength);
 
-            rightBuffer.resize(rightBlock.Length());
-            rightReader.Read(rightBuffer.data(), rightBlock.Length());
+            rightBuffer.resize(blockLength);
+            rightReader.Read(rightBuffer.data(), blockLength);
 
             for (float &data : leftBuffer)
                 data -= bias.left;
@@ -243,12 +255,115 @@ namespace unglitch
             for (float &data : rightBuffer)
                 data -= bias.right;
 
+            if (IsStartingNextProgram(programPosition, leftBuffer, rightBuffer, boundary))
+            {
+                // Split buffers into before/after the boundary.
+                cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
+                FloatVector leftBefore = SplitBuffer(leftBuffer, boundary);
+                FloatVector rightBefore = SplitBuffer(rightBuffer, boundary);
+                remover.Fix(leftBefore, rightBefore);
+                remover.Flush();
+                writer.StartNewFile(OutProgramFileName(outFilePrefix, ++hour));
+                programPosition = 0;
+            }
+            else
+            {
+                programPosition += blockLength;
+            }
+
             remover.Fix(leftBuffer, rightBuffer);
 
-            position += leftBlock.Length();
+            position += blockLength;
         }
 
         remover.Flush();
+    }
+
+    bool Project::IsStartingNextProgram(
+        long programPosition, 
+        const FloatVector& leftBuffer, 
+        const FloatVector& rightBuffer, 
+        long &boundary) const
+    {
+        using namespace std;
+
+        boundary = 0;
+
+        if (leftBuffer.size() != rightBuffer.size())
+            throw Error("Buffers different lengths in IsStartingNextProgram");
+
+        const long length = static_cast<long>(leftBuffer.size());
+
+        // We are starting a new program if we find a silent period
+        // somewhere between 58 and 61 minutes into the current program.
+        const double minProgramMinutes = 58.0;
+        const double maxProgramMinutes = 61.0;
+        const double samplesPerSecond = 44100.0;
+        const double samplesPerMinute = samplesPerSecond * 60.0;
+        double minutesBegin = programPosition / samplesPerMinute;
+        double minutesEnd = minutesBegin + (length / samplesPerMinute);
+        if (Overlap(minutesBegin, minutesEnd, minProgramMinutes, maxProgramMinutes))
+        {
+            const double minSilenceSeconds = 0.4;       // least duration we consider a silent period
+            const float amplitudeThreshold = 0.01;      // how loud can we get before not considered silent
+            bool inSilence = false;
+            for (long i=0; i < length; ++i)
+            {
+                float height = max(abs(leftBuffer[i]), abs(rightBuffer[i]));
+                if (height < amplitudeThreshold)
+                {
+                    if (!inSilence)
+                    {
+                        boundary = i;
+                        inSilence = true;
+                    }
+                }
+                else
+                {
+                    if (inSilence)
+                    {
+                        inSilence = false;
+                        long gap = i - boundary;
+                        double silentSeconds = gap / samplesPerSecond;
+                        if (silentSeconds >= minSilenceSeconds)
+                        {
+                            boundary += gap/2;   // split right in middle of silence
+                            return true;
+                        }
+                    }
+                }
+            }
+            if (inSilence)
+            {
+                long gap = length - boundary;
+                double silentSeconds = gap / samplesPerSecond;
+                if (silentSeconds >= minSilenceSeconds)
+                {
+                    boundary += gap/2;   // split right in middle of silence
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    FloatVector Project::SplitBuffer(FloatVector& buffer, long offset)
+    {
+        // Extract the beginning 'offset' samples from 'buffer' and return them.
+        // Remove those samples from the beginning of 'buffer' itself.
+        const long length = static_cast<long>(buffer.size());
+        if (offset<0 || offset>=length)
+            throw Error("SplitBuffer: invalid offset");
+
+        FloatVector front(offset);
+        for (long i=0; i < offset; ++i)
+            front[i] = buffer[i];
+
+        for (long i=offset; i < length; ++i)
+            buffer[i-offset] = buffer[i];
+
+        buffer.resize(length-offset);
+        return front;
     }
 
     std::string Project::BlockFileName(const std::string& fn) const
@@ -330,9 +445,29 @@ namespace unglitch
     }
 
     AudioWriter::AudioWriter(std::string _outFileName, int _rate, int _channels)
-        : outfile(fopen(_outFileName.c_str(), "wb"))
-        , outFileName(_outFileName)
+        : outfile(nullptr)
+        , rate(_rate)
+        , channels(_channels)
     {
+        StartNewFile(_outFileName);
+    }
+
+    AudioWriter::~AudioWriter()
+    {
+        if (outfile)
+        {
+            fclose(outfile);
+            outfile = nullptr;
+        }
+    }
+
+    void AudioWriter::StartNewFile(std::string _outFileName)
+    {
+        if (outfile)
+            fclose(outfile);
+
+        outFileName = _outFileName;
+        outfile = fopen(_outFileName.c_str(), "wb");
         if (!outfile)
             throw Error("Cannot open output file " + outFileName);
 
@@ -353,19 +488,10 @@ namespace unglitch
         header[1] = sizeof(header);     // data begins immediately after this header
         header[2] = 0xffffffffu;        // total data size unknown
         header[3] = 6;                  // 32-bit IEEE floating point format
-        header[4] = _rate;              // sampling rate in Hz
-        header[5] = _channels;          // number of channels
+        header[4] = rate;               // sampling rate in Hz
+        header[5] = channels;           // number of channels
 
         WriteData(header, sizeof(header));
-    }
-
-    AudioWriter::~AudioWriter()
-    {
-        if (outfile)
-        {
-            fclose(outfile);
-            outfile = nullptr;
-        }
     }
 
     void AudioWriter::WriteStereo(const FloatVector& left, const FloatVector& right)
@@ -498,7 +624,8 @@ namespace unglitch
         case ChunkStatus::Keep:
             if (!chunklist.empty())
             {
-                cout << ++glitchCount << ". Discarding " << ChunkListSampleCount() << " samples at " << TimeStamp(glitchStartSample) << endl;
+                ++glitchCount;
+                //cout << glitchCount << ". Discarding " << ChunkListSampleCount() << " samples at " << TimeStamp(glitchStartSample) << endl;
                 CrossFade();
             }
             writer.WriteChunk(chunk);
@@ -646,41 +773,30 @@ int main(int argc, const char *argv[])
     using namespace std;
     using namespace unglitch;
 
-    string inAudacityProjectFileName;
-    string outAudioFileName;
-
-    switch (argc)
+    if (argc != 2)
     {
-    case 2:
-        inAudacityProjectFileName = string(argv[1]) + ".aup";
-        outAudioFileName = string("cleaned-") + argv[1] + ".au";
-        break;
-
-    case 3:
-        inAudacityProjectFileName = argv[1];
-        outAudioFileName = argv[2];
-        break;
-
-    default:
         cerr << 
             "USAGE:\n"
             "\n"
-            "    unglitch infile.aup outfile.au\n"
-            "        Reads from Audacity project infile.aup and writes to outfile.au.\n"
-            "\n"
             "    unglitch projname\n"
-            "        Same as: unglitch projname.aud cleaned-projname.au\n"
+            "        Given an Audacity project projname.aup, creates\n"
+            "        a series of approximately hour-long audio files\n"
+            "        that are normalized and have glitches removed.\n"
             << endl;
 
         return 1;
     }
+
+    string projname(argv[1]);
+    string inAudacityProjectFileName = projname + ".aup";
+    string outAudioPrefix = string("cleaned-") + projname;
 
     try
     {
         Project project;
         project.Load(inAudacityProjectFileName.c_str());
         cout << "Loaded project." << endl;
-        project.Convert(outAudioFileName.c_str());
+        project.Convert(outAudioPrefix);
         cout << "Finished converting audio." << endl;
     }
     catch (const Error &error)
