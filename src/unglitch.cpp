@@ -268,7 +268,7 @@ namespace unglitch
             for (float &data : rightBuffer)
                 data -= bias.right;
 
-            if ((nsamples-position > MinSplitSamples) && IsStartingNextProgram(programPosition, leftBuffer, rightBuffer, boundary))
+            if ((nsamples-position > MinSplitSamples) && IsStartingNextProgram(hour, programPosition, leftBuffer, rightBuffer, boundary))
             {
                 // Split buffers into before/after the boundary.
                 FloatVector leftBefore = SplitBuffer(leftBuffer, boundary);
@@ -298,6 +298,7 @@ namespace unglitch
     }
 
     bool Project::IsStartingNextProgram(
+        int hour,
         long programPosition, 
         const FloatVector& leftBuffer, 
         const FloatVector& rightBuffer, 
@@ -314,8 +315,8 @@ namespace unglitch
 
         // We are starting a new program if we find a silent period
         // somewhere between 58 and 61 minutes into the current program.
-        const double minProgramMinutes = 58.0;
-        const double maxProgramMinutes = 61.0;
+        const double minProgramMinutes = (hour==1) ? 58.25 : 59.25;
+        const double maxProgramMinutes = 2.0 + minProgramMinutes;
         const double samplesPerSecond = static_cast<double>(SamplingRate);
         const double samplesPerMinute = samplesPerSecond * 60.0;
         double minutesBegin = programPosition / samplesPerMinute;

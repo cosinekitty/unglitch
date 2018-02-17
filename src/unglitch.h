@@ -100,7 +100,7 @@ namespace unglitch
         std::string BlockFileName(const std::string& rawBlockFileName) const;
         DcBias FindBias() const;
         static std::string OutProgramFileName(std::string prefix, int hour);
-        bool IsStartingNextProgram(long programPosition, const FloatVector& leftBuffer, const FloatVector& rightBuffer, long &boundary) const;
+        bool IsStartingNextProgram(int hour, long programPosition, const FloatVector& leftBuffer, const FloatVector& rightBuffer, long &boundary) const;
         FloatVector SplitBuffer(FloatVector& buffer, long offset);
         static bool Overlap(double a, double b, double x, double y)
         {
