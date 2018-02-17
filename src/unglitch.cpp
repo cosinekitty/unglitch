@@ -176,7 +176,10 @@ namespace unglitch
                 throw Error("Left and right blocks have different lengths.");            
 
             AudioReader leftReader(BlockFileName(leftBlock.Filename()));
+            leftReader.AssertChannels(1);
+
             AudioReader rightReader(BlockFileName(rightBlock.Filename()));
+            rightReader.AssertChannels(1);
 
             leftBuffer.resize(length);
             leftReader.Read(leftBuffer.data(), length);
@@ -411,7 +414,6 @@ namespace unglitch
         // 00000070  cf 4a c7 3d 2b ed 22 be  92 7b 15 3e 31 dc 96 3d  |.J.=+."..{.>1..=|
         // 00000080  96 f1 3d be 78 8f e7 3d  72 24 a0 3d a4 e8 0d be  |..=.x..=r$.=....|
 
-        // Detect Big-Endian versus little endian
         char header[24];
         int nread = fread(header, 1, sizeof(header), infile);
         if (nread != sizeof(header))
@@ -420,18 +422,26 @@ namespace unglitch
         if (memcmp(header, "dns.", 4))
             throw Error("Incorrect au file header in " + inFileName);        
 
-        uint32_t dataOffset = DecodeInt(header, 1*4);
+        dataOffset = DecodeInt(header, 1*4);
         uint32_t encoding = DecodeInt(header, 3*4);
         if (encoding != 6)
             throw Error("Unsupported data encoding: expected 32-bit IEEE floating point in " + inFileName);
 
-        uint32_t rate = DecodeInt(header, 4*4);
+        rate = DecodeInt(header, 4*4);
         if (rate != SamplingRate)
             throw Error("Unsupported sampling rate in file " + inFileName);
 
-        uint32_t channels = DecodeInt(header, 5*4);
-        if (channels != 1)
-            throw Error("Expected mono audio in file " + inFileName);
+        channels = DecodeInt(header, 5*4);
+
+        // Figure out total number of samples.
+        if (fseek(infile, 0, SEEK_END))
+            throw Error("Unable to seek to EOF in " + inFileName);
+
+        long size = ftell(infile);
+        if (size < dataOffset)
+            throw Error("Unable to determine file position in " + inFileName);
+
+        nsamples = (size - dataOffset) / (channels * sizeof(float));
 
         // Get ready to start reading audio data.
         if (fseek(infile, dataOffset, SEEK_SET))
@@ -447,6 +457,14 @@ namespace unglitch
         }
     }
 
+    void AudioReader::AssertChannels(uint32_t requiredNumChannels) const
+    {
+        using namespace std;
+
+        if (channels != requiredNumChannels)
+            throw Error("Expected " + to_string(requiredNumChannels) + " in file '" + filename + "', but found " + to_string(channels));
+    }
+
     uint32_t AudioReader::DecodeInt(const char *buffer, int offset)
     {
         uint32_t x = 0xffu & static_cast<uint32_t>(buffer[offset+3]);
@@ -454,6 +472,13 @@ namespace unglitch
         x = (x << 8) | (0xffu & static_cast<uint32_t>(buffer[offset+1]));
         x = (x << 8) | (0xffu & static_cast<uint32_t>(buffer[offset]));
         return x;
+    }
+
+    void AudioReader::Seek(long sampleIndex)
+    {
+        long fileOffset = (channels * sizeof(float))*sampleIndex + dataOffset;
+        if (fseek(infile, fileOffset, SEEK_SET))
+            throw Error("Unable to seek to sample index " + std::to_string(sampleIndex));            
     }
 
     void AudioReader::Read(float *buffer, int length)
@@ -471,7 +496,7 @@ namespace unglitch
         StartNewFile(_outFileName);
     }
 
-    AudioWriter::~AudioWriter()
+    void AudioWriter::Close()
     {
         if (outfile)
         {

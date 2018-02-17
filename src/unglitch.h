@@ -118,13 +118,24 @@ namespace unglitch
     private:
         FILE *infile;
         std::string filename;
+        long nsamples;
+        uint32_t rate;
+        uint32_t channels;
+        uint32_t dataOffset;
 
     public:
         AudioReader(std::string inFileName);
         ~AudioReader();
 
+        void AssertChannels(uint32_t requiredNumChannels) const;
+        void Seek(long sampleIndex);
         void Read(float *buffer, int length);
         const std::string& Filename() const { return filename; }
+
+        double DurationSeconds() const
+        {
+            return static_cast<double>(nsamples) / static_cast<double>(rate);
+        }
 
     private:
         static uint32_t DecodeInt(const char *buffer, int offset);
@@ -202,7 +213,10 @@ namespace unglitch
 
     public:
         AudioWriter(std::string _outFileName, int _rate, int _channels);
-        ~AudioWriter();
+        ~AudioWriter()
+        {
+            Close();
+        }
 
         void WriteStereo(const FloatVector& left, const FloatVector& right);
 
@@ -211,6 +225,7 @@ namespace unglitch
             WriteStereo(chunk.left, chunk.right);
         }
 
+        void Close();
         void StartNewFile(std::string _outFileName);
 
         std::string OutFileName() const
