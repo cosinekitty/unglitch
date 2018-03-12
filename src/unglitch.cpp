@@ -6,6 +6,8 @@
 
 #include "unglitch.h"
 
+#define DEBUG_DUMP_HISTOGRAMS 0
+
 /*
 	<wavetrack name="2017-12-10" channel="0" linked="1" mute="0" solo="0" height="160" minimized="0" isSelected="1" rate="44100" gain="1.0" pan="0.0">
 		<waveclip offset="0.00000000">
@@ -160,6 +162,7 @@ namespace unglitch
         }
     }
 
+#if DEBUG_DUMP_HISTOGRAMS
     void WriteHistogram(
         const char *outCsvFileName,
         const std::vector<int> &histogram)
@@ -199,6 +202,7 @@ namespace unglitch
 
         fclose(outfile);
     }
+#endif
 
     int Project::FoldTally(
         std::vector<int>& folded, 
@@ -324,8 +328,10 @@ namespace unglitch
         double leftBias = leftSum / position;
         double rightBias = rightSum / position;
 
+#if DEBUG_DUMP_HISTOGRAMS
         WriteHistogram("left.csv", leftHistogram);
         WriteHistogram("right.csv", rightHistogram);
+#endif
 
         double limit = FindLimit(leftHistogram, leftBias, rightHistogram, rightBias);
 
