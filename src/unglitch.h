@@ -84,10 +84,12 @@ namespace unglitch
         {
             float left;
             float right;
+            float limit;
 
-            DcBias(float _left, float _right)
+            DcBias(float _left, float _right, float _limit)
                 : left(_left)
                 , right(_right)
+                , limit(_limit)
                 {}
         };
 
@@ -98,6 +100,20 @@ namespace unglitch
     private:
         void InitDataPath(const char *inFileName);
         std::string BlockFileName(const std::string& rawBlockFileName) const;
+
+        static int FoldTally(
+            std::vector<int>& folded, 
+            const std::vector<int>& histogram,
+            double bias
+        );
+
+        static double FindLimit(
+            const std::vector<int> & leftHistogram, 
+            double leftBias, 
+            const std::vector<int> & rightHistogram, 
+            double rightBias
+        );
+
         DcBias FindBias() const;
         static std::string OutProgramFileName(std::string prefix, int hour);
         bool IsStartingNextProgram(int hour, long programPosition, const FloatVector& leftBuffer, const FloatVector& rightBuffer, long &boundary) const;
@@ -259,17 +275,19 @@ namespace unglitch
         GlitchChannelState rightState;
         std::deque<Chunk> chunklist;
         Chunk partial;
+        const float sampleLimit;
 
         static const int ChunkSamples = 1000;
         static const int MaxGlitchChunks = 3;
         static const int CrossFadeSamples = 250;
 
     public:
-        GlitchRemover(AudioWriter& _writer)
+        GlitchRemover(AudioWriter& _writer, float _sampleLimit)
             : position(0)
             , glitchStartSample(0)
             , glitchCount(0)
             , writer(_writer)
+            , sampleLimit(_sampleLimit)
             {}
 
         void Fix(FloatVector& left, FloatVector& right);

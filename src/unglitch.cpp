@@ -142,6 +142,125 @@ namespace unglitch
         }
     }
 
+    const int NUM_FOLDED_BINS = 1000;       // 3 decimal places of resolution in the range [0.0, +1.0].
+    const int NUM_HISTOGRAM_BINS = 2 * NUM_FOLDED_BINS;
+
+    void HistogramTally(std::vector<int> &histogram, const FloatVector &buffer)
+    {
+        for (float data : buffer)
+        {
+            if (data < -1.0 || data > +1.0)
+                throw Error("HistogramTally: data out of range.");
+
+            int bin = std::floor(((data + 1.0) / 2.0) * (NUM_HISTOGRAM_BINS - 1));
+            if (bin < 0 || bin >= NUM_HISTOGRAM_BINS)
+                throw Error("HistogramTally: bin out of range.");
+
+            ++histogram.at(bin);
+        }
+    }
+
+    void WriteHistogram(
+        const char *outCsvFileName,
+        const std::vector<int> &histogram)
+    {
+        FILE *outfile = fopen(outCsvFileName, "wt");
+        if (!outfile)
+            throw Error("Cannot open histogram output csv file.");
+
+        fprintf(outfile,"\"floor\",\"count\",\"fraction\"\n");
+
+        int population = 0;
+        int front = -1;
+        int back = -1;
+        for (int i=0; i < NUM_HISTOGRAM_BINS; ++i)
+        {
+            int count = histogram.at(i);
+            if (count != 0)
+            {
+                population += count;
+                back = i;
+                if (front < 0)
+                    front = i;
+            }
+        }
+
+        if (back >= 0)
+        {
+            double delta = 2.0 / NUM_HISTOGRAM_BINS;
+            for (int i = front; i <= back; ++i)
+            {
+                double low = -1.0 + (delta * i);
+                int count = histogram.at(i);
+                double fraction = static_cast<double>(count) / static_cast<double>(population);
+                fprintf(outfile, "%0.3lf,%d,%0.15lf\n", low, count, fraction);
+            }
+        }
+
+        fclose(outfile);
+    }
+
+    int Project::FoldTally(
+        std::vector<int>& folded, 
+        const std::vector<int>& histogram,
+        double bias)
+    {
+        int population = 0;
+        double delta = 2.0 / NUM_HISTOGRAM_BINS;
+        for (int i=0; i < NUM_HISTOGRAM_BINS; ++i)
+        {
+            int count = histogram.at(i);
+            if (count > 0)
+            {
+                // Calculate the median value of the raw bin.
+                double median = -1.0 + (delta * (i + 0.5));
+
+                // Subtract out the DC bias to get the corrected median value
+                // and take absolute value.
+                double fvalue = std::abs(median - bias);
+
+                // convert to the folded bin index
+                int bin = static_cast<int>(std::floor(0.5 + fvalue*(NUM_FOLDED_BINS - 1)));
+
+                if (bin < 0 || bin >= NUM_FOLDED_BINS)
+                    throw Error("FoldTally: bin is out of bounds: bin=" + std::to_string(bin) + ", i=" + std::to_string(i));
+
+                population += count;
+                folded.at(bin) += count;
+            }
+        }
+
+        return population;
+    }
+
+    double Project::FindLimit(
+        const std::vector<int> & leftHistogram, 
+        double leftBias, 
+        const std::vector<int> & rightHistogram, 
+        double rightBias)
+    {
+        // The input histograms for left and right channels span the range -1.0 to +1.0,
+        // and refer to raw values that still include DC bias.
+        // Subtract the respective biases from both histograms and fold them to
+        // absolute value range 0.0 to +1.0. This makes it easier to determine the
+        // absolute glitch cutoff that keeps the vast majority of sample values.
+        std::vector<int> folded(NUM_FOLDED_BINS);
+        int population = FoldTally(folded, leftHistogram, leftBias);
+        population += FoldTally(folded, rightHistogram, rightBias);
+
+        const int DENOMINATOR = 800000;     // denominator of fraction of extreme samples to discard
+        int keep = population - (population / DENOMINATOR);
+        int total = 0;
+        for (int i=0; i < NUM_FOLDED_BINS; ++i)
+        {
+            total += folded.at(i);
+            if (total >= keep)
+                return static_cast<double>(i) / static_cast<double>(NUM_FOLDED_BINS);
+        }
+
+        throw Error("FindLimit: Could not find keep limit.");
+    }
+
     Project::DcBias Project::FindBias() const
     {
         // Measure the DC offset in both channels.
@@ -154,6 +273,9 @@ namespace unglitch
         const int nblocks = leftTrack.NumBlocks();
         if (nblocks != rightTrack.NumBlocks())
             throw Error("Left and right tracks have different number of blocks.");
+
+        std::vector<int> leftHistogram(NUM_HISTOGRAM_BINS);
+        std::vector<int> rightHistogram(NUM_HISTOGRAM_BINS);
 
         double leftSum = 0.0;
         double rightSum = 0.0;
@@ -193,10 +315,21 @@ namespace unglitch
             for (float data : rightBuffer)
                 rightSum += data;
 
+            HistogramTally(leftHistogram, leftBuffer);
+            HistogramTally(rightHistogram, rightBuffer);
+
             position += length;
         }
 
-        return DcBias(leftSum/position, rightSum/position);
+        double leftBias = leftSum / position;
+        double rightBias = rightSum / position;
+
+        WriteHistogram("left.csv", leftHistogram);
+        WriteHistogram("right.csv", rightHistogram);
+
+        double limit = FindLimit(leftHistogram, leftBias, rightHistogram, rightBias);
+
+        return DcBias(leftBias, rightBias, limit);
     }
 
     std::string Project::OutProgramFileName(std::string prefix, int hour)
@@ -210,7 +343,10 @@ namespace unglitch
 
         cout << "Finding DC bias..." << endl;
         DcBias bias = FindBias();
-        cout << "Bias: left=" << bias.left << ", right=" << bias.right << endl;        
+        double headroom_dB = -20.0 * log10(bias.limit);
+        cout << "Bias: left=" << bias.left << ", right=" << bias.right 
+            << ", limit=" << bias.limit << ", headroom=" << headroom_dB << " dB"
+            << endl; 
 
         // Convert multiple pairs of single-channel audio into a single stereo audio file.
         // Assume that left and right channes come in equal-size blocks.
@@ -233,7 +369,7 @@ namespace unglitch
         int hour = 1;
         AudioWriter writer(OutProgramFileName(outFilePrefix, hour), SamplingRate, 2);
 
-        GlitchRemover remover(writer);
+        GlitchRemover remover(writer, bias.limit);
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
@@ -731,6 +867,8 @@ namespace unglitch
         float peak1 = PeakValue(first);
         float peak2 = PeakValue(second);
         bool inglitch = (peak1 > Threshold) && (peak1 - state.prevPeak > BadJump) && (peak1 - peak2 > BadJump);
+
+        inglitch = inglitch || (std::max(peak1, peak2) > sampleLimit);
 
         if (state.runLength == 0)
         {
