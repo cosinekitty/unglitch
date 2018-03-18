@@ -172,15 +172,18 @@ namespace unglitch
         ChunkStatus status;
         FloatVector left;
         FloatVector right;
+        long position;
 
         Chunk()
             : status(ChunkStatus::Unknown)
+            , position(-1L)
             {}
 
-        Chunk(const FloatVector& _left, const FloatVector& _right, int offset, int length)
+        Chunk(const FloatVector& _left, const FloatVector& _right, int offset, int length, long front)
             : status(ChunkStatus::Unknown)
             , left(&_left[offset], &_left[offset + length])
             , right(&_right[offset], &_right[offset + length])
+            , position(front + offset)
             {}
 
         void Clear()
@@ -236,8 +239,6 @@ namespace unglitch
             Close();
         }
 
-        void WriteStereo(const FloatVector& left, const FloatVector& right);
-
         void WriteChunk(const Chunk &chunk)
         {
             WriteStereo(chunk.left, chunk.right);
@@ -252,6 +253,7 @@ namespace unglitch
         }
 
     private:
+        void WriteStereo(const FloatVector& left, const FloatVector& right);
         void WriteData(const void *data, size_t nbytes);
     };
 
@@ -294,6 +296,7 @@ namespace unglitch
 
         void Fix(FloatVector& left, FloatVector& right);
         void Flush();
+        void WriteChunk(const Chunk &chunk);
 
         int GlitchCount() const
         {
@@ -318,6 +321,7 @@ namespace unglitch
 
         int ChunkListSampleCount() const;
         void CrossFade();
+        void WarnExceedSampleLimit(const Chunk& chunk) const;
     };
 }
 

@@ -807,13 +807,13 @@ namespace unglitch
 
         while (offset + ChunkSamples <= length)
         {
-            ProcessChunk(position + offset, Chunk(left, right, offset, ChunkSamples));
+            ProcessChunk(position + offset, Chunk(left, right, offset, ChunkSamples, position));
             offset += ChunkSamples;
         }
 
         // There may be a partial chunk left over from this iteration.
         if (offset < length)
-            partial = Chunk(left, right, offset, length-offset);
+            partial = Chunk(left, right, offset, length-offset, position);
 
     done:
         position += length;
@@ -843,7 +843,7 @@ namespace unglitch
 
         case ChunkStatus::CancelGlitch:
             Flush();
-            writer.WriteChunk(chunk);
+            WriteChunk(chunk);
             break;
 
         case ChunkStatus::Keep:
@@ -853,7 +853,7 @@ namespace unglitch
                 //cout << glitchCount << ". Discarding " << ChunkListSampleCount() << " samples at " << TimeStamp(glitchStartSample) << endl;
                 CrossFade();
             }
-            writer.WriteChunk(chunk);
+            WriteChunk(chunk);
             break;
 
         default:
@@ -892,7 +892,7 @@ namespace unglitch
         first.left.resize(CrossFadeSamples);
         first.right.resize(CrossFadeSamples);
 
-        writer.WriteStereo(first.left, first.right);
+        WriteChunk(first);
         chunklist.clear();
     }
 
@@ -961,19 +961,46 @@ namespace unglitch
         }
     }
 
+    void GlitchRemover::WriteChunk(const Chunk &chunk)
+    {
+        WarnExceedSampleLimit(chunk);
+        writer.WriteChunk(chunk);
+    }  
+
+    void GlitchRemover::WarnExceedSampleLimit(const Chunk& chunk) const
+    {
+        using namespace std;
+
+        float peak = 0.0f;
+
+        for (float data : chunk.left)
+            peak = max(peak, abs(data));
+
+        for (float data : chunk.right)
+            peak = max(peak, abs(data));
+
+        if (peak > sampleLimit)
+        {
+            cout << "WARNING: Chunk at " << TimeStamp(chunk.position) << " has peak=" 
+                << setprecision(5) << peak
+                << " above limit=" << sampleLimit 
+                << endl;
+        }
+    }
+
     void GlitchRemover::Flush()
     {
         // Write any chunks remaining in the chunklist.
         while (!chunklist.empty())
         {
-            writer.WriteChunk(chunklist.front());
+            WriteChunk(chunklist.front());
             chunklist.pop_front();
         }
 
         // Write partial chunk if it contains any data.
         if (partial.Length() > 0)
         {
-            writer.WriteChunk(partial);
+            WriteChunk(partial);
             partial.Clear();
         }
     }
