@@ -912,10 +912,9 @@ namespace unglitch
         const float Threshold = 0.27f;
         const float BadJump = 0.08f;
         float peak1 = PeakValue(first);
-        float peak2 = PeakValue(second);
-        bool inglitch = (peak1 > Threshold) && (peak1 - state.prevPeak > BadJump) && (peak1 - peak2 > BadJump);
-
-        inglitch = inglitch || (std::max(peak1, peak2) > sampleLimit);
+        bool inglitch = 
+            (peak1 > sampleLimit) ||
+            ((peak1 > Threshold) && (peak1 - state.prevPeak > BadJump) && (peak1 - PeakValue(second) > BadJump));
 
         if (state.runLength == 0)
         {
