@@ -323,7 +323,7 @@ namespace unglitch
         }
 
     private:
-        void ProcessChunk(long sample, Chunk chunk);
+        void ProcessChunk(Chunk chunk);
 
         void ProcessChunkChannel(
             long sample,

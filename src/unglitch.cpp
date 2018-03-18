@@ -804,14 +804,14 @@ namespace unglitch
             }
 
             partial.Extend(left, right, 0, extra);
-            ProcessChunk(position - plen, partial);
+            ProcessChunk(partial);
             partial.Clear();
             offset += extra;
         }
 
         while (offset + ChunkSamples <= length)
         {
-            ProcessChunk(position + offset, Chunk(left, right, offset, ChunkSamples, position));
+            ProcessChunk(Chunk(left, right, offset, ChunkSamples, position));
             offset += ChunkSamples;
         }
 
@@ -824,12 +824,9 @@ namespace unglitch
         position += length;
     }
 
-    void GlitchRemover::ProcessChunk(long sample, Chunk chunk)
+    void GlitchRemover::ProcessChunk(Chunk chunk)
     {
         using namespace std;
-
-        if (sample != chunk.position)
-            throw Error("GlitchRemove::ProcessChunk - incorrect chunk position");
 
         // Called once for every new chunk.
         // If we are already in a glitch in either channel, check for end of glitch.
@@ -840,8 +837,8 @@ namespace unglitch
 
         chunk.status = ChunkStatus::Keep;
 
-        ProcessChunkChannel(sample, leftState, chunk.left, chunk.right, chunk.status);
-        ProcessChunkChannel(sample, rightState, chunk.right, chunk.left, chunk.status);
+        ProcessChunkChannel(chunk.position, leftState, chunk.left, chunk.right, chunk.status);
+        ProcessChunkChannel(chunk.position, rightState, chunk.right, chunk.left, chunk.status);
 
         switch (chunk.status)
         {
