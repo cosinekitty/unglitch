@@ -435,10 +435,6 @@ namespace unglitch
                 cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
                 writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
             }
-            else
-            {
-                programPosition += blockLength;     // FIXFIXFIX - should always happen at bottom of loop, but need to fix IsStartingNewProgram time offset thresholds
-            }
 
             if (skippingFiller)
             {
@@ -467,6 +463,7 @@ namespace unglitch
                 remover.Fix(leftBuffer, rightBuffer);
 
             position += blockLength;
+            programPosition += blockLength;
         }
 
         remover.Flush();
@@ -942,7 +939,7 @@ namespace unglitch
             // In bad state. Do we end the bad state now or keep going?
             if (inglitch)
             {
-                if (++state.runLength <= MaxGlitchChunks)
+                if (++state.runLength <= MaxGlitchChunks)       // FIXFIXFIX (#5): not quite right to track run length independently for each channel! glitches can come from either channel but affect both
                 {
                     // Staying in glitch state.
                     status = ChunkStatus::Discard;
