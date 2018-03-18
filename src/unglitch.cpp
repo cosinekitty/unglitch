@@ -350,9 +350,11 @@ namespace unglitch
         cout << "Finding DC bias..." << endl;
         DcBias bias = FindBias();
         double headroom_dB = -20.0 * log10(bias.limit);
-        cout << "Bias: left=" << bias.left << ", right=" << bias.right 
-            << ", limit=" << bias.limit << ", headroom=" << headroom_dB << " dB"
-            << endl; 
+        cout << fixed 
+            << setprecision(5) << "Bias: left=" << bias.left << ", right=" << bias.right 
+            << ", limit=" << bias.limit 
+            << setprecision(1) << ", headroom=" << headroom_dB << " dB"
+            << endl;
 
         // Convert multiple pairs of single-channel audio into a single stereo audio file.
         // Assume that left and right channes come in equal-size blocks.
@@ -379,6 +381,9 @@ namespace unglitch
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
+        bool skippingFiller = false;    // are we skipping commercials and station ID stuff between programs?
+        FloatVector leftFiller;
+        FloatVector rightFiller;
         long position = 0;
         long boundary = 0;
         long programPosition = 0;
@@ -415,6 +420,10 @@ namespace unglitch
 
             if ((nsamples-position > MinSplitSamples) && IsStartingNextProgram(hour, programPosition, leftBuffer, rightBuffer, boundary))
             {
+                programPosition = 0;    // program position includes any skipped filler at front; needed by IsStartingNextProgram()
+                ++hour;
+                skippingFiller = true;
+
                 // Split buffers into before/after the boundary.
                 FloatVector leftBefore = SplitBuffer(leftBuffer, boundary);
                 FloatVector rightBefore = SplitBuffer(rightBuffer, boundary);
@@ -424,15 +433,38 @@ namespace unglitch
                 remover.ResetGlitchCount();
 
                 cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
-                writer.StartNewFile(OutProgramFileName(outFilePrefix, ++hour));
-                programPosition = 0;
+                writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
             }
             else
             {
-                programPosition += blockLength;
+                programPosition += blockLength;     // FIXFIXFIX - should always happen at bottom of loop, but need to fix IsStartingNewProgram time offset thresholds
             }
 
-            remover.Fix(leftBuffer, rightBuffer);
+            if (skippingFiller)
+            {
+                // Detect end of filler. There should be at between 1.0 and 2.5 minutes of filler.
+                // Filler ends with WMFE announcer speaking "... and Daytona Beach" or "... for all devices".
+                // Detect the generic pattern: [speech, silence, music] after at least 1.0 minutes.
+                // Buffer up all suspected filler so that if we can't find the transition between filler
+                // and program, we give up and dump all the filler to the output and keep going.
+                const double fillerMinutes = leftFiller.size() / (SamplingRate * 60.0);
+                if (fillerMinutes > 2.5)
+                {
+                    cout << "Could not determine end of filler. Keeping entire beginning of program." << endl;
+                    remover.Fix(leftFiller, rightFiller);
+                    leftFiller.clear();
+                    rightFiller.clear();
+                    skippingFiller = false;
+                }
+                else
+                {
+                    Append(leftFiller, leftBuffer);
+                    Append(rightFiller, rightBuffer);
+                }
+            }
+
+            if (!skippingFiller)
+                remover.Fix(leftBuffer, rightBuffer);
 
             position += blockLength;
         }
@@ -528,6 +560,15 @@ namespace unglitch
 
         buffer.resize(length-offset);
         return front;
+    }
+
+    void Project::Append(FloatVector &target, const FloatVector& source)
+    {
+        const size_t offset = target.size();
+        const size_t increase = source.size();
+        target.resize(offset + increase);
+        for (size_t index=0; index < increase; ++index)
+            target[offset + index] = source[index];
     }
 
     std::string Project::BlockFileName(const std::string& fn) const

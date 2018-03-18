@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <deque>
 #include <vector>
@@ -117,7 +118,8 @@ namespace unglitch
         DcBias FindBias() const;
         static std::string OutProgramFileName(std::string prefix, int hour);
         bool IsStartingNextProgram(int hour, long programPosition, const FloatVector& leftBuffer, const FloatVector& rightBuffer, long &boundary) const;
-        FloatVector SplitBuffer(FloatVector& buffer, long offset);
+        static FloatVector SplitBuffer(FloatVector& buffer, long offset);
+        static void Append(FloatVector &target, const FloatVector& source);
         static bool Overlap(double a, double b, double x, double y)
         {
             return 
