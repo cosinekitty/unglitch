@@ -132,12 +132,12 @@ namespace unglitch
         if (status != XML_SUCCESS)
             throw Error(string("Cannot open Audacity project file ") + inFileName);
 
-        cout << "Loaded xml: " << inFileName << endl;
+        //cout << "Loaded xml: " << inFileName << endl;
 
         XMLElement *root = doc.RootElement();
         for (XMLElement *trackElem = root->FirstChildElement("wavetrack"); trackElem; trackElem = trackElem->NextSiblingElement("wavetrack"))  
         {
-            cout << "Found wavetrack" << endl;
+            //cout << "Found wavetrack" << endl;
             channelList.push_back(WaveTrack());
             WaveTrack &track = channelList.back();
             track.Parse(trackElem);
@@ -949,6 +949,7 @@ namespace unglitch
                     state.runLength = 0;
                     state.prevPeak = peak1;
                     status = ChunkStatus::CancelGlitch;
+                    std::cout << "Glitch too long at " << TimeStamp(glitchStartSample) << std::endl;
                 }
             }
             else
@@ -1022,7 +1023,7 @@ int main(int argc, const char *argv[])
     {
         Project project;
         project.Load(inAudacityProjectFileName.c_str());
-        cout << "Loaded project." << endl;
+        cout << "Loaded project: " << inAudacityProjectFileName << endl;
         project.Convert(outAudioPrefix);
         cout << "Finished converting audio." << endl;
     }
