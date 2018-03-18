@@ -24,6 +24,15 @@ namespace unglitch
 
     typedef std::vector<float> FloatVector;
 
+    inline float PeakValue(const FloatVector & buffer)
+    {
+        using namespace std;
+        float peak = 0.0f;
+        for (float data : buffer)
+            peak = max(peak, abs(data));
+        return peak;
+    }
+
     class Error
     {
     private:
@@ -203,6 +212,11 @@ namespace unglitch
             return status != ChunkStatus::Unknown;
         }
 
+        float Peak() const
+        {
+            return std::max(PeakValue(left), PeakValue(right));
+        }
+
         FloatVector& First(bool flip) 
         {
             return flip ? right : left;
@@ -309,7 +323,6 @@ namespace unglitch
         }
 
     private:
-        static float PeakValue(const FloatVector& vect);
         void ProcessChunk(long sample, Chunk chunk);
 
         void ProcessChunkChannel(

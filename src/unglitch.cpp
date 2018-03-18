@@ -949,7 +949,7 @@ namespace unglitch
                     state.runLength = 0;
                     state.prevPeak = peak1;
                     status = ChunkStatus::CancelGlitch;
-                    std::cout << "Glitch too long at " << TimeStamp(glitchStartSample) << std::endl;
+                    std::cout << "WARNING: Glitch too long at " << TimeStamp(glitchStartSample) << std::endl;
                 }
             }
             else
@@ -971,14 +971,7 @@ namespace unglitch
     {
         using namespace std;
 
-        float peak = 0.0f;
-
-        for (float data : chunk.left)
-            peak = max(peak, abs(data));
-
-        for (float data : chunk.right)
-            peak = max(peak, abs(data));
-
+        float peak = chunk.Peak();
         if (peak > sampleLimit)
         {
             cout << "WARNING: Chunk at " << TimeStamp(chunk.position) << " has peak=" 
@@ -1003,15 +996,6 @@ namespace unglitch
             WriteChunk(partial);
             partial.Clear();
         }
-    }
-
-    float GlitchRemover::PeakValue(const FloatVector& vect)
-    {
-        float peak = 0.0f;
-        for (float x : vect)
-            peak = std::max(peak, std::abs(x));
-
-        return peak;
     }
 
     int GlitchRemover::ChunkListSampleCount() const
