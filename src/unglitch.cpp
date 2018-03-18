@@ -780,11 +780,6 @@ namespace unglitch
     void GlitchRemover::Fix(FloatVector& left, FloatVector& right)
     {
         // Break both channels into chunks of ChunkSamples samples.
-        // Characterize the chunk by its max absolute value.
-        // Crudest algorithm: optionally exclude entire run of 1..MaxGlitchChunks.
-        // Improvement: on outermost chunks in a run to be excluded,
-        // find exact point in middle to start/stop chopping first/last.
-        // Improvement: after removing a section, cross-fade to eliminate popping.
 
         // Convert flat (left, right) buffers into chunks.        
         // There may be a partial chunk left over from the last iteration.
@@ -792,15 +787,24 @@ namespace unglitch
         int length = static_cast<int>(left.size());
 
         int offset = 0;
-        if (partial.Length() > 0)
+        int plen = partial.Length();
+        if (plen > 0)
         {
-            int extra = std::min(ChunkSamples - partial.Length(), length);
-            partial.Extend(left, right, 0, extra);
-            
-            if (partial.Length() < ChunkSamples)
-                goto done;     // we ran out of data this time... nothing left to do
+            if (plen >= ChunkSamples)
+                throw Error("Bug in GlitchRemover::Fix: plen=" + std::to_string(plen));
 
-            ProcessChunk(position - extra, partial);
+            // Calculate the number of samples we need to fill up the partial chunk.
+            int extra = ChunkSamples - plen;
+            if (length < extra)
+            {
+                // We don't have enough new data to make a complete chunk.
+                // So append what we have and bail out now.
+                partial.Extend(left, right, 0, length);
+                goto done;
+            }
+
+            partial.Extend(left, right, 0, extra);
+            ProcessChunk(position - plen, partial);
             partial.Clear();
             offset += extra;
         }
@@ -811,6 +815,7 @@ namespace unglitch
             offset += ChunkSamples;
         }
 
+        // We always process chunks in units of ChunkSamples.
         // There may be a partial chunk left over from this iteration.
         if (offset < length)
             partial = Chunk(left, right, offset, length-offset, position);
@@ -822,6 +827,9 @@ namespace unglitch
     void GlitchRemover::ProcessChunk(long sample, Chunk chunk)
     {
         using namespace std;
+
+        if (sample != chunk.position)
+            throw Error("GlitchRemove::ProcessChunk - incorrect chunk position");
 
         // Called once for every new chunk.
         // If we are already in a glitch in either channel, check for end of glitch.
