@@ -200,6 +200,7 @@ namespace unglitch
             status = ChunkStatus::Unknown;
             left.clear();
             right.clear();
+            position = -1L;
         }
 
         int Length() const
@@ -291,6 +292,7 @@ namespace unglitch
         AudioWriter& writer;
         GlitchChannelState leftState;
         GlitchChannelState rightState;
+        Chunk lastGoodChunk;
         std::deque<Chunk> chunklist;
         Chunk partial;
         const float sampleLimit;
@@ -333,7 +335,7 @@ namespace unglitch
             ChunkStatus &status);
 
         int ChunkListSampleCount() const;
-        void CrossFade();
+        void CrossFade(Chunk &first, Chunk &last);
         void WarnExceedSampleLimit(const Chunk& chunk) const;
     };
 }

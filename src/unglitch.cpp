@@ -845,17 +845,25 @@ namespace unglitch
 
         case ChunkStatus::CancelGlitch:
             Flush();
-            WriteChunk(chunk);
+            lastGoodChunk = chunk;
             break;
 
         case ChunkStatus::Keep:
-            if (!chunklist.empty())
+            if (chunklist.empty())
+            {
+                WriteChunk(lastGoodChunk);
+                lastGoodChunk = chunk;
+            }
+            else
             {
                 ++glitchCount;
-                //cout << glitchCount << ". Discarding " << ChunkListSampleCount() << " samples at " << TimeStamp(glitchStartSample) << endl;
-                CrossFade();
+                chunklist.clear();
+
+                if (lastGoodChunk.Length() > 0)
+                    CrossFade(lastGoodChunk, chunk);
+                else
+                    lastGoodChunk = chunk;
             }
-            WriteChunk(chunk);
             break;
 
         default:
@@ -863,39 +871,46 @@ namespace unglitch
         }
     }
 
-    void GlitchRemover::CrossFade()
+    void GlitchRemover::CrossFade(Chunk &first, Chunk &last)
     {
-        if (chunklist.empty())
-            return;
-
-        // Keep the first few samples of the first bad chunk (fading out)
-        // and the last few samples of the last bad chunk (fading in).
-        // This eliminates an abrupt popping sound for the audio we are removing.
-        // Note that the first and last bad chunks may be the same chunk.
-
-        Chunk &first = chunklist.front();
-        Chunk &last = chunklist.back();
-
         if (first.Length() != ChunkSamples)
             throw Error("CrossFade: first chunk is wrong length.");
 
         if (last.Length() != ChunkSamples)
             throw Error("CrossFade: second chunk is wrong length.");
 
+        // Crossfade the front of 'last' into the tail of 'first'.
         int k = ChunkSamples - CrossFadeSamples;
         for (int i=0; i < CrossFadeSamples; ++i)
         {
             float fadeIn = static_cast<float>(i) / static_cast<float>(CrossFadeSamples-1);
             float fadeOut = 1.0f - fadeIn;
-            first.left[i] = fadeOut*first.left[i] + fadeIn*last.left[i+k];
-            first.right[i] = fadeOut*first.right[i] + fadeIn*last.right[i+k];
+            first.left[i+k] = fadeOut*first.left[i+k] + fadeIn*last.left[i];
+            first.right[i+k] = fadeOut*first.right[i+k] + fadeIn*last.right[i];
         }
 
-        first.left.resize(CrossFadeSamples);
-        first.right.resize(CrossFadeSamples);
-
+        // Write first chunk with crossfade at tail.
         WriteChunk(first);
-        chunklist.clear();
+
+        // Prepend the part of 'last' after the crossfade to 'partial'.
+        Chunk remainder(last.left, last.right, CrossFadeSamples, last.Length() - CrossFadeSamples, last.position);
+        remainder.Extend(partial.left, partial.right, 0, partial.Length());
+        partial = remainder;
+
+        if (partial.Length() >= ChunkSamples)
+        {
+            // There is enough to form a new chunk, so that front part becomes the new lastGoodChunk.
+            lastGoodChunk = Chunk(partial.left, partial.right, 0, ChunkSamples, partial.position);
+
+            // Chop off the full chunk from the front of 'partial'.
+            partial = Chunk(partial.left, partial.right, ChunkSamples, partial.Length() - ChunkSamples, partial.position);
+        }
+        else
+        {
+            // We don't have enough to create a firstGoodChunk yet.
+            // We will have to fill up partial later.
+            lastGoodChunk.Clear();
+        }
     }
 
     void GlitchRemover::ProcessChunkChannel(
@@ -984,6 +999,12 @@ namespace unglitch
 
     void GlitchRemover::Flush()
     {
+        if (lastGoodChunk.Length() > 0)
+        {
+            WriteChunk(lastGoodChunk);
+            lastGoodChunk.Clear();
+        }
+
         // Write any chunks remaining in the chunklist.
         while (!chunklist.empty())
         {
