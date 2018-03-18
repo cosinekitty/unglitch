@@ -335,7 +335,7 @@ namespace unglitch
             ChunkStatus &status);
 
         int ChunkListSampleCount() const;
-        void CrossFade(Chunk &first, Chunk &last);
+        void CrossFade(Chunk &chunk);
         void WarnExceedSampleLimit(const Chunk& chunk) const;
     };
 }

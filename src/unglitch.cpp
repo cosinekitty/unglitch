@@ -858,11 +858,7 @@ namespace unglitch
             {
                 ++glitchCount;
                 chunklist.clear();
-
-                if (lastGoodChunk.Length() > 0)
-                    CrossFade(lastGoodChunk, chunk);
-                else
-                    lastGoodChunk = chunk;
+                CrossFade(chunk);
             }
             break;
 
@@ -871,29 +867,35 @@ namespace unglitch
         }
     }
 
-    void GlitchRemover::CrossFade(Chunk &first, Chunk &last)
+    void GlitchRemover::CrossFade(Chunk &chunk)
     {
-        if (first.Length() != ChunkSamples)
-            throw Error("CrossFade: first chunk is wrong length.");
+        if (chunk.Length() != ChunkSamples)
+            throw Error("CrossFade: chunk has wrong length.");
 
-        if (last.Length() != ChunkSamples)
-            throw Error("CrossFade: second chunk is wrong length.");
+        if (lastGoodChunk.Length() == 0)
+        {
+            lastGoodChunk = chunk;
+            return;
+        }
 
-        // Crossfade the front of 'last' into the tail of 'first'.
+        if (lastGoodChunk.Length() != ChunkSamples)
+            throw Error("CrossFade: lastGoodChunk has wrong length.");
+
+        // Crossfade the front of 'chunk' into the tail of 'lastGoodChunk'.
         int k = ChunkSamples - CrossFadeSamples;
         for (int i=0; i < CrossFadeSamples; ++i)
         {
             float fadeIn = static_cast<float>(i) / static_cast<float>(CrossFadeSamples-1);
             float fadeOut = 1.0f - fadeIn;
-            first.left[i+k] = fadeOut*first.left[i+k] + fadeIn*last.left[i];
-            first.right[i+k] = fadeOut*first.right[i+k] + fadeIn*last.right[i];
+            lastGoodChunk.left[i+k] = fadeOut*lastGoodChunk.left[i+k] + fadeIn*chunk.left[i];
+            lastGoodChunk.right[i+k] = fadeOut*lastGoodChunk.right[i+k] + fadeIn*chunk.right[i];
         }
 
         // Write first chunk with crossfade at tail.
-        WriteChunk(first);
+        WriteChunk(lastGoodChunk);
 
-        // Prepend the part of 'last' after the crossfade to 'partial'.
-        Chunk remainder(last.left, last.right, CrossFadeSamples, last.Length() - CrossFadeSamples, last.position);
+        // Prepend the part of 'chunk' after the crossfade to 'partial'.
+        Chunk remainder(chunk.left, chunk.right, CrossFadeSamples, chunk.Length() - CrossFadeSamples, chunk.position);
         remainder.Extend(partial.left, partial.right, 0, partial.Length());
         partial = remainder;
 
@@ -907,7 +909,7 @@ namespace unglitch
         }
         else
         {
-            // We don't have enough to create a firstGoodChunk yet.
+            // We don't have enough to create a new lastGoodChunk yet.
             // We will have to fill up partial later.
             lastGoodChunk.Clear();
         }
