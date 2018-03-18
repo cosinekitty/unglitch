@@ -343,6 +343,17 @@ namespace unglitch
         return prefix + "-" + std::to_string(hour) + ".au";
     }
 
+    void Project::PrintProgramSummary(const std::string& filename, const GlitchRemover &remover)
+    {
+        using namespace std;
+
+        cout << filename << " : " << remover.GlitchCount() << " glitches, peak="
+            << setprecision(5) << remover.ProgramPeak() 
+            << ", headroom=" << setprecision(1) << remover.HeadroomDecibels() << " dB." 
+            << endl;    
+    }
+    
+
     void Project::Convert(std::string outFilePrefix)
     {
         using namespace std;
@@ -429,8 +440,9 @@ namespace unglitch
                 FloatVector rightBefore = SplitBuffer(rightBuffer, boundary);
                 remover.Fix(leftBefore, rightBefore);
                 remover.Flush();
-                cout << "Removed " << remover.GlitchCount() << " glitches from " << writer.OutFileName() << endl;
-                remover.ResetGlitchCount();
+
+                PrintProgramSummary(writer.OutFileName(), remover);                    
+                remover.ResetProgram();
 
                 cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
                 writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
@@ -467,8 +479,8 @@ namespace unglitch
         }
 
         remover.Flush();
-        cout << "Removed " << remover.GlitchCount() << " glitches from " << writer.OutFileName() << endl;
-        remover.ResetGlitchCount();
+        PrintProgramSummary(writer.OutFileName(), remover);                    
+        remover.ResetProgram();
     }
 
     bool Project::IsStartingNextProgram(
@@ -981,12 +993,6 @@ namespace unglitch
 
     void GlitchRemover::WriteChunk(const Chunk &chunk)
     {
-        WarnExceedSampleLimit(chunk);
-        writer.WriteChunk(chunk);
-    }  
-
-    void GlitchRemover::WarnExceedSampleLimit(const Chunk& chunk) const
-    {
         using namespace std;
 
         float peak = chunk.Peak();
@@ -997,7 +1003,12 @@ namespace unglitch
                 << " above limit=" << sampleLimit 
                 << endl;
         }
-    }
+
+        if (peak > programPeak)
+            programPeak = peak;
+
+        writer.WriteChunk(chunk);
+    }  
 
     void GlitchRemover::Flush()
     {

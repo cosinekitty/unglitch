@@ -19,6 +19,8 @@
 
 namespace unglitch
 {
+    class GlitchRemover;
+
     bool IsLittleEndian();
     void ToggleFloatEndian(float *buffer, int length);
 
@@ -138,6 +140,8 @@ namespace unglitch
                 (y >= a && y <= b)
             ;
         }
+
+        static void PrintProgramSummary(const std::string& filename, const GlitchRemover &remover);
     };
 
     class AudioReader   // reads .au files
@@ -296,6 +300,7 @@ namespace unglitch
         std::deque<Chunk> chunklist;
         Chunk partial;
         const float sampleLimit;
+        float programPeak;
 
         static const int ChunkSamples = 1000;
         static const int MaxGlitchChunks = 3;
@@ -308,6 +313,7 @@ namespace unglitch
             , glitchCount(0)
             , writer(_writer)
             , sampleLimit(_sampleLimit)
+            , programPeak(0.0f)
             {}
 
         void Fix(FloatVector& left, FloatVector& right);
@@ -319,9 +325,23 @@ namespace unglitch
             return glitchCount;
         }
 
-        void ResetGlitchCount()
+        float ProgramPeak() const
+        {
+            return programPeak;
+        }
+
+        float HeadroomDecibels() const
+        {
+            if (programPeak <= 0.0)
+                return 144.0;
+
+            return -20.0 * log10(programPeak);
+        }
+
+        void ResetProgram()
         {
             glitchCount = 0;
+            programPeak = 0.0f;
         }
 
     private:
@@ -336,7 +356,6 @@ namespace unglitch
 
         int ChunkListSampleCount() const;
         void CrossFade(Chunk &chunk);
-        void WarnExceedSampleLimit(const Chunk& chunk) const;
     };
 }
 
