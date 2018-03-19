@@ -1009,6 +1009,8 @@ namespace unglitch
         return sum;
     }
 
+    const int GlitchGraph::HEIGHT_LIMIT = 30;
+
     void GlitchGraph::Reset()
     {
         tally.clear();
@@ -1086,7 +1088,7 @@ namespace unglitch
     int GlitchGraph::Height(size_t minute) const
     {
         if (minute < tally.size())
-            return std::min(HEIGHT_LIMIT, tally.at(minute));
+            return std::min(GlitchGraph::HEIGHT_LIMIT, tally.at(minute));
 
         return 0;
     }

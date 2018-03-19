@@ -262,7 +262,7 @@ namespace unglitch
     class GlitchGraph       // tracks glitches per minute, so we can create a density graph
     {
     private:
-        static const int HEIGHT_LIMIT = 30;
+        static const int HEIGHT_LIMIT;
         std::vector<int> tally;
 
     public:
