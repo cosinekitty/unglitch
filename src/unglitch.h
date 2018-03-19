@@ -172,36 +172,24 @@ namespace unglitch
         static uint32_t DecodeInt(const char *buffer, int offset);
     };
 
-    enum class ChunkStatus
-    {
-        Unknown,
-        Keep,
-        Discard,
-        CancelGlitch,
-    };
-
     struct Chunk
     {
-        ChunkStatus status;
         FloatVector left;
         FloatVector right;
         long position;
 
         Chunk()
-            : status(ChunkStatus::Unknown)
-            , position(-1L)
+            : position(-1L)
             {}
 
         Chunk(const FloatVector& _left, const FloatVector& _right, int offset, int length, long front)
-            : status(ChunkStatus::Unknown)
-            , left(&_left[offset], &_left[offset + length])
+            : left(&_left[offset], &_left[offset + length])
             , right(&_right[offset], &_right[offset + length])
             , position(front + offset)
             {}
 
         void Clear()
         {
-            status = ChunkStatus::Unknown;
             left.clear();
             right.clear();
             position = -1L;
@@ -210,11 +198,6 @@ namespace unglitch
         int Length() const
         {
             return static_cast<int>(left.size());
-        }
-
-        bool IsResolved() const
-        {
-            return status != ChunkStatus::Unknown;
         }
 
         float Peak() const
@@ -276,17 +259,6 @@ namespace unglitch
         void WriteData(const void *data, size_t nbytes);
     };
 
-    struct GlitchChannelState
-    {
-        int runLength;
-        float prevPeak;
-
-        GlitchChannelState()
-            : runLength(0)
-            , prevPeak(0.0f)
-            {}
-    };
-
     class GlitchRemover
     {
     private:
@@ -294,8 +266,8 @@ namespace unglitch
         long glitchStartSample;
         int glitchCount;
         AudioWriter& writer;
-        GlitchChannelState leftState;
-        GlitchChannelState rightState;
+        float prevPeakLeft;
+        float prevPeakRight;
         Chunk lastGoodChunk;
         std::deque<Chunk> chunklist;
         Chunk partial;
@@ -303,7 +275,7 @@ namespace unglitch
         float programPeak;
 
         static const int ChunkSamples = 1000;
-        static const int MaxGlitchChunks = 3;
+        static const size_t MaxGlitchChunks = 3;
         static const int CrossFadeSamples = 250;
 
     public:
@@ -312,6 +284,8 @@ namespace unglitch
             , glitchStartSample(0)
             , glitchCount(0)
             , writer(_writer)
+            , prevPeakLeft(0.0f)
+            , prevPeakRight(0.0f)
             , sampleLimit(_sampleLimit)
             , programPeak(0.0f)
             {}
@@ -346,14 +320,7 @@ namespace unglitch
 
     private:
         void ProcessChunk(Chunk chunk);
-
-        void ProcessChunkChannel(
-            long sample,
-            GlitchChannelState &state, 
-            const FloatVector &first, 
-            const FloatVector &second,
-            ChunkStatus &status);
-
+        bool IsGlitch(float prevPeak, float newPeak, float otherPeak);
         int ChunkListSampleCount() const;
         void CrossFade(Chunk &chunk);
     };

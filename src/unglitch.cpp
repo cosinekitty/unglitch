@@ -833,6 +833,16 @@ namespace unglitch
         position += length;
     }
 
+    bool GlitchRemover::IsGlitch(float prevPeak, float newPeak, float otherPeak)
+    {
+        const float Threshold = 0.27f;
+        const float BadJump = 0.08f;
+
+        return 
+            (newPeak > sampleLimit) ||
+            ((newPeak > Threshold) && (newPeak - prevPeak > BadJump) && (newPeak - otherPeak > BadJump));
+    }
+
     void GlitchRemover::ProcessChunk(Chunk chunk)
     {
         using namespace std;
@@ -844,38 +854,52 @@ namespace unglitch
         // If we were not in a glitch and everything still looks fine,
         // just write this chunk to the output and keep going.
 
-        chunk.status = ChunkStatus::Keep;
+        float newPeakLeft  = PeakValue(chunk.left);
+        float newPeakRight = PeakValue(chunk.right);
 
-        ProcessChunkChannel(chunk.position, leftState, chunk.left, chunk.right, chunk.status);
-        ProcessChunkChannel(chunk.position, rightState, chunk.right, chunk.left, chunk.status);
-
-        switch (chunk.status)
+        if (IsGlitch(prevPeakLeft, newPeakLeft, newPeakRight) || IsGlitch(prevPeakRight, newPeakRight, newPeakLeft))
         {
-        case ChunkStatus::Discard:
-            chunklist.push_back(chunk);
-            break;
+            // This chunk is glitchy.
+            if (chunklist.size() < MaxGlitchChunks)
+            {
+                if (chunklist.empty())
+                    glitchStartSample = chunk.position;     // this is the very first glitchy chunk in a run
+                
+                // We are in a glitch. Keep saving bad chunks until 
+                // we decide whether to commit or cancel the glitch removal.
+                chunklist.push_back(chunk);
+            }
+            else
+            {
+                // Too many glitches. Cancel the glitch removal.
+                cout << "WARNING: Canceling removal of glitch at " << TimeStamp(glitchStartSample) << endl;
+                Flush();
+                lastGoodChunk = chunk;
+                prevPeakLeft = newPeakLeft;
+                prevPeakRight = newPeakRight;
+            }
+        }
+        else
+        {
+            // This chunk is not glitchy.
 
-        case ChunkStatus::CancelGlitch:
-            Flush();
-            lastGoodChunk = chunk;
-            break;
+            prevPeakLeft = newPeakLeft;
+            prevPeakRight = newPeakRight;
 
-        case ChunkStatus::Keep:
             if (chunklist.empty())
             {
+                // We are continuing a good section. This is the most common case. (We hope.)
                 WriteChunk(lastGoodChunk);
                 lastGoodChunk = chunk;
             }
             else
             {
+                // We just found the end of a glitch that is short enough to remove.
+                cout << "Removing glitch at " << TimeStamp(glitchStartSample) << endl;
                 ++glitchCount;
                 chunklist.clear();
                 CrossFade(chunk);
             }
-            break;
-
-        default:
-            throw Error("Invalid chunk.status");
         }
     }
 
@@ -924,70 +948,6 @@ namespace unglitch
             // We don't have enough to create a new lastGoodChunk yet.
             // We will have to fill up partial later.
             lastGoodChunk.Clear();
-        }
-    }
-
-    void GlitchRemover::ProcessChunkChannel(
-        long sample,
-        GlitchChannelState &state, 
-        const FloatVector &first, 
-        const FloatVector &second,
-        ChunkStatus &status)
-    {
-        // There are 4 possible cases:
-        // 1. (most common) start in good state, end in good state.
-        // 2. go from good state to glitch state
-        // 3. stay in glitch state
-        // 4. end glitch state (no more glitch, or glitch too long)
-
-        const float Threshold = 0.27f;
-        const float BadJump = 0.08f;
-        float peak1 = PeakValue(first);
-        bool inglitch = 
-            (peak1 > sampleLimit) ||
-            ((peak1 > Threshold) && (peak1 - state.prevPeak > BadJump) && (peak1 - PeakValue(second) > BadJump));
-
-        if (state.runLength == 0)
-        {
-            // Starting in good state.
-            if (inglitch)
-            {
-                // Entering a glitch. Keep prevPeak value as-is.
-                state.runLength = 1;
-                status = ChunkStatus::Discard;
-                glitchStartSample = sample;
-            }
-            else
-            {
-                // Staying in good state. Update prevPeak.
-                state.prevPeak = peak1;
-            }
-        }
-        else
-        {
-            // In bad state. Do we end the bad state now or keep going?
-            if (inglitch)
-            {
-                if (++state.runLength <= MaxGlitchChunks)       // FIXFIXFIX (#5): not quite right to track run length independently for each channel! glitches can come from either channel but affect both
-                {
-                    // Staying in glitch state.
-                    status = ChunkStatus::Discard;
-                }
-                else
-                {
-                    // Glitch is too long. Cancel glitch.
-                    state.runLength = 0;
-                    state.prevPeak = peak1;
-                    status = ChunkStatus::CancelGlitch;
-                    std::cout << "WARNING: Glitch too long at " << TimeStamp(glitchStartSample) << std::endl;
-                }
-            }
-            else
-            {
-                // Leaving glitch state.
-                state.prevPeak = peak1;
-                state.runLength = 0;
-            }
         }
     }
 
