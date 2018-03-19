@@ -910,6 +910,9 @@ namespace unglitch
 
     void GlitchRemover::CrossFade(Chunk &chunk)
     {
+        static_assert(CrossFadeSamples > 1, "CrossFadeSamples must be greater than 1");
+        static_assert(CrossFadeSamples < ChunkSamples, "CrossFadeSamples must be less than ChunkSamples");
+
         if (chunk.Length() != ChunkSamples)
             throw Error("CrossFade: chunk has wrong length.");
 
