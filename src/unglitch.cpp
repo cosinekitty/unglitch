@@ -939,7 +939,7 @@ namespace unglitch
         WriteChunk(lastGoodChunk);
 
         // Prepend the part of 'chunk' after the crossfade to 'partial'.
-        Chunk remainder(chunk.left, chunk.right, CrossFadeSamples, chunk.Length() - CrossFadeSamples, chunk.position);
+        Chunk remainder(chunk.left, chunk.right, CrossFadeSamples, k, chunk.position);
         remainder.Extend(partial.left, partial.right, 0, partial.Length());
         partial = remainder;
 
