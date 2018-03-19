@@ -259,10 +259,27 @@ namespace unglitch
         void WriteData(const void *data, size_t nbytes);
     };
 
+    class GlitchGraph       // tracks glitches per minute, so we can create a density graph
+    {
+    private:
+        static const int HEIGHT_LIMIT = 30;
+        std::vector<int> tally;
+
+    public:
+        void Reset();
+        void Increment(long programSampleOffset);
+        std::string Format() const;
+
+    private:
+        int Height(size_t minute) const;
+        static char MinuteTickMark(size_t minute);
+    };
+
     class GlitchRemover
     {
     private:
         long position;
+        long programStartPosition;
         long glitchStartSample;
         int glitchCount;
         AudioWriter& writer;
@@ -273,6 +290,7 @@ namespace unglitch
         Chunk partial;
         const float sampleLimit;
         float programPeak;
+        GlitchGraph graph;
 
         static const int ChunkSamples = 1000;
         static const size_t MaxGlitchChunks = 3;
@@ -281,6 +299,7 @@ namespace unglitch
     public:
         GlitchRemover(AudioWriter& _writer, float _sampleLimit)
             : position(0)
+            , programStartPosition(0)
             , glitchStartSample(0)
             , glitchCount(0)
             , writer(_writer)
@@ -312,10 +331,17 @@ namespace unglitch
             return -20.0 * log10(programPeak);
         }
 
+        std::string FormatGlitchGraph() const
+        {
+            return graph.Format();
+        }
+
         void ResetProgram()
         {
+            programStartPosition = position;
             glitchCount = 0;
             programPeak = 0.0f;
+            graph.Reset();
         }
 
     private:

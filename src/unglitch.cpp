@@ -350,7 +350,9 @@ namespace unglitch
         cout << filename << " : " << remover.GlitchCount() << " glitches, peak="
             << setprecision(5) << remover.ProgramPeak() 
             << ", headroom=" << setprecision(1) << remover.HeadroomDecibels() << " dB." 
-            << endl;    
+            << endl;
+
+        cout << remover.FormatGlitchGraph() << endl;
     }
     
 
@@ -860,6 +862,9 @@ namespace unglitch
         if (IsGlitch(prevPeakLeft, newPeakLeft, newPeakRight) || IsGlitch(prevPeakRight, newPeakRight, newPeakLeft))
         {
             // This chunk is glitchy.
+            // Tally each glitchy chunk we find in the graph, whether or not we end up removing it.
+            graph.Increment(chunk.position - programStartPosition);
+
             if (chunklist.size() < MaxGlitchChunks)
             {
                 if (chunklist.empty())
@@ -895,7 +900,7 @@ namespace unglitch
             else
             {
                 // We just found the end of a glitch that is short enough to remove.
-                cout << "Removing glitch at " << TimeStamp(glitchStartSample) << endl;
+                //cout << "Removing glitch at " << TimeStamp(glitchStartSample) << endl;
                 ++glitchCount;
                 chunklist.clear();
                 CrossFade(chunk);
@@ -999,6 +1004,88 @@ namespace unglitch
         for (const Chunk &chunk : chunklist)
             sum += chunk.Length();
         return sum;
+    }
+
+    void GlitchGraph::Reset()
+    {
+        tally.clear();
+    }
+
+    void GlitchGraph::Increment(long programSampleOffset)
+    {
+        // Convert sample offset to minutes (rounding down).
+        size_t minutes = static_cast<size_t>(programSampleOffset / (60 * SamplingRate));
+        const size_t MaxMinutes = 90;
+        if (minutes > MaxMinutes)
+            throw Error("GlitchGraph;:Increment -- time offset too large: minutes=" + std::to_string(minutes));
+
+        if (minutes >= tally.size())
+            tally.resize(1 + minutes);
+
+        ++tally.at(minutes);
+    }
+
+    std::string GlitchGraph::Format() const
+    {
+        using namespace std;
+
+        size_t duration = tally.size();
+
+        int maxHeight = 0;
+        for (size_t minute=0; minute < duration; ++minute)
+        {
+            int height = Height(minute);
+            if (height > maxHeight)
+                maxHeight = height;
+        }
+
+        int horizontal = duration;
+        int vertical = maxHeight + 1;       // always include horizontal time axis "0----+----1---"
+
+        vector<char> image(vertical * horizontal, ' ');
+
+        for (size_t minute=0; minute < duration; ++minute)
+        {            
+            int height = Height(minute);
+            char marker = (height == HEIGHT_LIMIT) ? '@' : '|';
+            image.at(minute) = MinuteTickMark(minute);
+            for (int y=1; y <= height; ++y)
+                image.at(minute + y*horizontal) = marker;
+        }
+
+        string text;
+        for (int y = vertical-1; y >= 0; --y)
+        {
+            for (int x = 0; x < horizontal; ++x)
+                text.push_back(image.at(x + y*horizontal));
+            
+            // Trim trailing whitespace.
+            while (!text.empty() && (text.back() == ' '))
+                text.pop_back();
+
+            text.push_back('\n');
+        }
+
+        return text;
+    }
+
+    char GlitchGraph::MinuteTickMark(size_t minute)
+    {
+        if (minute % 10 == 0)
+            return static_cast<char>('0' + ((minute / 10) % 10));
+
+        if (minute % 5 == 0)
+            return '+';
+
+        return '-';
+    }    
+
+    int GlitchGraph::Height(size_t minute) const
+    {
+        if (minute < tally.size())
+            return std::min(HEIGHT_LIMIT, tally.at(minute));
+
+        return 0;
     }
 }
 
