@@ -7,6 +7,7 @@
 #include "unglitch.h"
 
 #define DEBUG_DUMP_HISTOGRAMS 0
+#define DEBUG_DUMP_SILENT_PERIODS 1
 
 /*
 	<wavetrack name="2017-12-10" channel="0" linked="1" mute="0" solo="0" height="160" minimized="0" isSelected="1" rate="44100" gain="1.0" pan="0.0">
@@ -28,6 +29,19 @@ namespace unglitch
     inline double MinutesFromSamples(size_t samples)
     {
         return samples / (60.0 * SamplingRate);
+    }
+
+    inline double SecondsFromSamples(size_t samples)
+    {
+        return samples / static_cast<double>(SamplingRate);
+    }
+
+    inline size_t SamplesFromSeconds(double seconds)
+    {
+        if (seconds < 0.0)
+            throw Error("Attempt to convert negative time to samples.");
+
+        return static_cast<size_t>(seconds * SamplingRate);
     }
 
     std::string TimeStamp(long offset);
@@ -457,25 +471,19 @@ namespace unglitch
 
             if (skippingFiller)
             {
-                // Detect end of filler. There should be at between 1.0 and 2.5 minutes of filler.
-                // Filler ends with WMFE announcer speaking "... and Daytona Beach" or "... for all devices".
-                // Detect the generic pattern: [speech, silence, music] after at least 1.0 minutes.
-                // Buffer up all suspected filler so that if we can't find the transition between filler
-                // and program, we give up and dump all the filler to the output and keep going.
-                long fillerSamples;
-                if (FindEndOfFiller(leftFiller, fillerSamples))
+                if (MinutesFromSamples(leftFiller.size()) > 2.5)
                 {
-                    cout << "Removing " << TimeStamp(fillerSamples) << " of filler." << endl;
-                    EatBufferFront(leftFiller, fillerSamples);
-                    EatBufferFront(rightFiller, fillerSamples);
-                    remover.Fix(leftFiller, rightFiller);
-                    leftFiller.clear();
-                    rightFiller.clear();
-                    skippingFiller = false;
-                }
-                else if (MinutesFromSamples(leftFiller.size()) > 2.5)
-                {
-                    cout << "Could not determine end of filler. Keeping entire beginning of program." << endl;
+                    long fillerSamples = FindEndOfFiller(leftFiller);
+                    if (fillerSamples > 0)
+                    {
+                        cout << "Removing " << TimeStamp(fillerSamples) << " of filler." << endl;
+                        EatBufferFront(leftFiller, fillerSamples);
+                        EatBufferFront(rightFiller, fillerSamples);
+                    }
+                    else
+                    {
+                        cout << "Could not determine end of filler. Keeping entire beginning of program." << endl;
+                    }
                     remover.Fix(leftFiller, rightFiller);
                     leftFiller.clear();
                     rightFiller.clear();
@@ -483,6 +491,8 @@ namespace unglitch
                 }
                 else
                 {
+                    // Buffer up all suspected filler so that if we can't find the transition between filler
+                    // and program, we give up and dump all the filler to the output and keep going.
                     Append(leftFiller, leftBuffer);
                     Append(rightFiller, rightBuffer);
                 }
@@ -495,16 +505,85 @@ namespace unglitch
             programPosition += blockLength;
         }
 
+        if (skippingFiller)
+        {
+            cout << "WARNING: Hit end of input while skipping filler. Flushing..." << endl;
+            remover.Fix(leftFiller, rightFiller);
+        }
+
         remover.Flush();
         PrintProgramSummary(writer.OutFileName(), remover);                    
         remover.ResetProgram();
     }
 
-    bool Project::FindEndOfFiller(const FloatVector &buffer, long &fillerSamples)
+    long Project::FindEndOfFiller(const FloatVector &buffer)
     {
-        (void)buffer;
-        fillerSamples = -1;
-        return false;
+        using namespace std;
+
+        struct GapInfo
+        {
+            size_t offset;
+            size_t length;
+
+            GapInfo(size_t _offset, size_t _length)
+                : offset(_offset)
+                , length(_length)
+                {}
+
+            size_t Center() const { return offset + (length/2); }
+        };
+
+        // Detect end of filler. There should be between 1.0 and 2.5 minutes of filler.
+        // Filler ends with WMFE announcer speaking "... and Daytona Beach" or "... for all devices".
+        // Detect the generic pattern: [speech, silence, music] after at least 1.0 minutes.
+
+        // Find all gaps of silence in the buffer.
+        const double minSilenceSeconds = 0.6;       // least duration we consider a silent period
+        const size_t minSilenceSamples = static_cast<size_t>(minSilenceSeconds * SamplingRate);
+        const float amplitudeThreshold = 0.01;      // how loud can we get before not considered silent
+        vector<GapInfo> gaplist;
+        const size_t buflen = buffer.size();
+        size_t silenceOffset = 0;
+        size_t silentSamples = 0;
+        for (size_t i=0; i < buflen; ++i)
+        {
+            if (abs(buffer[i]) < amplitudeThreshold)
+            {
+                if (silentSamples == 0)
+                    silenceOffset = i;
+                ++silentSamples;
+            }
+            else
+            {
+                if (silentSamples >= minSilenceSamples)
+                    gaplist.push_back(GapInfo(silenceOffset, silentSamples));
+                silentSamples = 0;
+            }
+        }
+
+        // Note: we deliberately ignore any residual silence at the very end.
+        // We want to find only silent periods before non-silent periods.
+
+#if DEBUG_DUMP_SILENT_PERIODS
+        for (auto gap : gaplist)
+            cout << "SILENCE: offset=" << TimeStamp(gap.offset) 
+                << ", duration=" << setprecision(3) << SecondsFromSamples(gap.length) 
+                << endl;
+#endif
+
+        
+        // Conservative algorithm: find the first gap of silence that is at least 
+        // 55 seconds into the recording. 
+
+        const size_t minOffset = SamplesFromSeconds(55.0);
+        for (auto gap : gaplist)
+        {
+            size_t center = gap.Center();
+            if (center >= minOffset)
+                return static_cast<long>(center);
+        }
+
+        return 0;   // Could not detect filler boundary. Keep all audio.
     }
 
     bool Project::IsStartingNextProgram(
