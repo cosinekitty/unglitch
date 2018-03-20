@@ -21,9 +21,6 @@ namespace unglitch
 {
     class GlitchRemover;
 
-    bool IsLittleEndian();
-    void ToggleFloatEndian(float *buffer, int length);
-
     typedef std::vector<float> FloatVector;
 
     inline float PeakValue(const FloatVector & buffer)
@@ -130,6 +127,7 @@ namespace unglitch
         static std::string OutProgramFileName(std::string prefix, int hour);
         bool IsStartingNextProgram(int hour, long programPosition, const FloatVector& leftBuffer, const FloatVector& rightBuffer, long &boundary) const;
         static FloatVector SplitBuffer(FloatVector& buffer, long offset);
+        static void EatBufferFront(FloatVector& buffer, long offset);
         static void Append(FloatVector &target, const FloatVector& source);
         static bool Overlap(double a, double b, double x, double y)
         {
@@ -142,6 +140,7 @@ namespace unglitch
         }
 
         static void PrintProgramSummary(const std::string& filename, const GlitchRemover &remover);
+        static bool FindEndOfFiller(const FloatVector &buffer, long &fillerSamples);
     };
 
     class AudioReader   // reads .au files

@@ -25,6 +25,11 @@ namespace unglitch
 {
     const int SamplingRate = 44100;
 
+    inline double MinutesFromSamples(size_t samples)
+    {
+        return samples / (60.0 * SamplingRate);
+    }
+
     std::string TimeStamp(long offset);
 
     long NumericAttribute(tinyxml2::XMLElement *elem, const char *name)
@@ -457,8 +462,18 @@ namespace unglitch
                 // Detect the generic pattern: [speech, silence, music] after at least 1.0 minutes.
                 // Buffer up all suspected filler so that if we can't find the transition between filler
                 // and program, we give up and dump all the filler to the output and keep going.
-                const double fillerMinutes = leftFiller.size() / (SamplingRate * 60.0);
-                if (fillerMinutes > 2.5)
+                long fillerSamples;
+                if (FindEndOfFiller(leftFiller, fillerSamples))
+                {
+                    cout << "Removing " << TimeStamp(fillerSamples) << " of filler." << endl;
+                    EatBufferFront(leftFiller, fillerSamples);
+                    EatBufferFront(rightFiller, fillerSamples);
+                    remover.Fix(leftFiller, rightFiller);
+                    leftFiller.clear();
+                    rightFiller.clear();
+                    skippingFiller = false;
+                }
+                else if (MinutesFromSamples(leftFiller.size()) > 2.5)
                 {
                     cout << "Could not determine end of filler. Keeping entire beginning of program." << endl;
                     remover.Fix(leftFiller, rightFiller);
@@ -483,6 +498,13 @@ namespace unglitch
         remover.Flush();
         PrintProgramSummary(writer.OutFileName(), remover);                    
         remover.ResetProgram();
+    }
+
+    bool Project::FindEndOfFiller(const FloatVector &buffer, long &fillerSamples)
+    {
+        (void)buffer;
+        fillerSamples = -1;
+        return false;
     }
 
     bool Project::IsStartingNextProgram(
@@ -559,7 +581,7 @@ namespace unglitch
         // Extract the beginning 'offset' samples from 'buffer' and return them.
         // Remove those samples from the beginning of 'buffer' itself.
         const long length = static_cast<long>(buffer.size());
-        if (offset<0 || offset>=length)
+        if (offset<0 || offset>length)
             throw Error("SplitBuffer: invalid offset");
 
         FloatVector front(offset);
@@ -571,6 +593,20 @@ namespace unglitch
 
         buffer.resize(length-offset);
         return front;
+    }
+
+    void Project::EatBufferFront(FloatVector& buffer, long offset)
+    {
+        // Extract the beginning 'offset' samples from 'buffer' and return them.
+        // Remove those samples from the beginning of 'buffer' itself.
+        const long length = static_cast<long>(buffer.size());
+        if (offset<0 || offset>length)
+            throw Error("EatBufferFront: invalid offset");
+
+        for (long i=offset; i < length; ++i)
+            buffer[i-offset] = buffer[i];
+
+        buffer.resize(length-offset);
     }
 
     void Project::Append(FloatVector &target, const FloatVector& source)
