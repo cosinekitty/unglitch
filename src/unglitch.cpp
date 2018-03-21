@@ -952,7 +952,7 @@ namespace unglitch
 
         long seconds = offset / SamplingRate;
         offset %= SamplingRate;
-        long millis = (offset * 1000L) / SamplingRate;
+        long millis = ((offset * 1000L) + (SamplingRate/2)) / SamplingRate;
         long minutes = seconds / 60L;
         seconds %= 60L;
         long hours = minutes / 60L;
