@@ -140,7 +140,7 @@ namespace unglitch
         }
 
         static void PrintProgramSummary(const std::string& filename, const GlitchRemover &remover);
-        static long FindEndOfFiller(const FloatVector &buffer);
+        static void AdjustProgramLength(const std::string& filename, const FloatVector &buffer, long rawLengthSamples);
     };
 
     class AudioReader   // reads .au files
@@ -252,6 +252,8 @@ namespace unglitch
         {
             return outFileName;
         }
+
+        static void DeleteFrontSamples(std::string filename, long numSamples);
 
     private:
         void WriteStereo(const FloatVector& left, const FloatVector& right);

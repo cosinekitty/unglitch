@@ -413,9 +413,8 @@ namespace unglitch
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
-        bool skippingFiller = false;    // are we skipping commercials and station ID stuff between programs?
-        FloatVector leftFiller;
-        FloatVector rightFiller;
+        bool bufferingFront = false;    // are we buffering the first couple of minutes of audio? (helps find silent periods for deleting filler)
+        FloatVector leftFiller;         // buffer of left channel only, at front of second, third, ... program hours (for finding silence gaps)
         long position = 0;
         long boundary = 0;
         long programPosition = 0;
@@ -452,9 +451,8 @@ namespace unglitch
 
             if ((nsamples-position > MinSplitSamples) && IsStartingNextProgram(hour, programPosition, leftBuffer, rightBuffer, boundary))
             {
-                programPosition = 0;    // program position includes any skipped filler at front; needed by IsStartingNextProgram()
                 ++hour;
-                skippingFiller = true;
+                bufferingFront = true;
 
                 // Split buffers into before/after the boundary.
                 FloatVector leftBefore = SplitBuffer(leftBuffer, boundary);
@@ -465,58 +463,54 @@ namespace unglitch
                 PrintProgramSummary(writer.OutFileName(), remover);                    
                 remover.ResetProgram();
 
-                cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
+                string prevFileName = writer.OutFileName();
                 writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
+
+                if (leftFiller.size() > 0)
+                {
+                    AdjustProgramLength(prevFileName, leftFiller, programPosition);
+                    leftFiller.clear();
+                }
+
+                cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
+                programPosition = 0;    // program position includes any skipped filler at front; needed by IsStartingNextProgram()
             }
 
-            if (skippingFiller)
+            if (bufferingFront)
             {
                 if (MinutesFromSamples(leftFiller.size()) > 2.5)
                 {
-                    long fillerSamples = FindEndOfFiller(leftFiller);
-                    if (fillerSamples > 0)
-                    {
-                        cout << "Removing " << TimeStamp(fillerSamples) << " of filler." << endl;
-                        EatBufferFront(leftFiller, fillerSamples);
-                        EatBufferFront(rightFiller, fillerSamples);
-                    }
-                    else
-                    {
-                        cout << "Could not determine end of filler. Keeping entire beginning of program." << endl;
-                    }
-                    remover.Fix(leftFiller, rightFiller);
-                    leftFiller.clear();
-                    rightFiller.clear();
-                    skippingFiller = false;
+                    // We have captured enough of the front of the program.
+                    bufferingFront = false;
                 }
                 else
                 {
                     // Buffer up all suspected filler so that if we can't find the transition between filler
                     // and program, we give up and dump all the filler to the output and keep going.
                     Append(leftFiller, leftBuffer);
-                    Append(rightFiller, rightBuffer);
                 }
             }
 
-            if (!skippingFiller)
-                remover.Fix(leftBuffer, rightBuffer);
+            remover.Fix(leftBuffer, rightBuffer);
 
             position += blockLength;
             programPosition += blockLength;
         }
-
-        if (skippingFiller)
-        {
-            cout << "WARNING: Hit end of input while skipping filler. Flushing..." << endl;
-            remover.Fix(leftFiller, rightFiller);
-        }
-
+ 
         remover.Flush();
         PrintProgramSummary(writer.OutFileName(), remover);                    
         remover.ResetProgram();
+
+        if (leftFiller.size() > 0)
+        {
+            string lastFileName = writer.OutFileName();
+            writer.Close();
+            AdjustProgramLength(lastFileName, leftFiller, programPosition);
+            leftFiller.clear();
+        }
     }
 
-    long Project::FindEndOfFiller(const FloatVector &buffer)
+    void Project::AdjustProgramLength(const std::string& filename, const FloatVector &buffer, long rawLengthSamples)
     {
         using namespace std;
 
@@ -532,6 +526,14 @@ namespace unglitch
 
             size_t Center() const { return offset + (length/2); }
         };
+
+        const double IdealProgramMinutes = 58.5;
+        const double RawProgramMinutes = MinutesFromSamples(rawLengthSamples);
+        if (RawProgramMinutes < IdealProgramMinutes + 0.9)
+        {
+            cout << "NOTE: Program is too short to truncate: " << TimeStamp(rawLengthSamples) << endl;
+            return;
+        }
 
         // Detect end of filler. There should be between 1.0 and 2.5 minutes of filler.
         // Filler ends with WMFE announcer speaking "... and Daytona Beach" or "... for all devices".
@@ -571,19 +573,42 @@ namespace unglitch
                 << endl;
 #endif
 
+        const double ToleranceSeconds = 5.0;
+        double bestError = 1.0e6;
+        size_t bestCenter = 0;
         
-        // Conservative algorithm: find the first gap of silence that is at least 
-        // 55 seconds into the recording. 
-
-        const size_t minOffset = SamplesFromSeconds(55.0);
+        // Find the center-of-silence point that most closely fits a program length of 0:58:30.
         for (auto gap : gaplist)
         {
+            // Find the sample offset of the middle of each silent period.
             size_t center = gap.Center();
-            if (center >= minOffset)
-                return static_cast<long>(center);
+            
+            // Calculate how long the resulting audio would be if we chopped off the front here.
+            double candidateLengthMinutes = MinutesFromSamples(rawLengthSamples - center);
+
+            // Find error from ideal program length
+            double errorSeconds = 60.0 * abs(IdealProgramMinutes - candidateLengthMinutes);
+            if (errorSeconds < bestError)
+            {
+                bestError = errorSeconds;
+                bestCenter = center;
+            }
         }
 
-        return 0;   // Could not detect filler boundary. Keep all audio.
+        cout << "ADJUST: Best candidate program length=" 
+            << TimeStamp(rawLengthSamples - bestCenter) 
+            << ", error=" << setprecision(3) << bestError << " seconds."
+            << endl;
+
+        if (bestError < ToleranceSeconds)
+        {
+            cout << "ADJUST: Deleting samples from front of file: " << filename << endl;
+            AudioWriter::DeleteFrontSamples(filename, bestCenter);
+        }
+        else
+        {
+            cout << "ADJUST: Not adjusting program length because error is outside tolerance limit." << endl;
+        }
     }
 
     bool Project::IsStartingNextProgram(
@@ -812,6 +837,43 @@ namespace unglitch
             fclose(outfile);
             outfile = nullptr;
         }
+    }
+
+    void AudioWriter::DeleteFrontSamples(std::string filename, long numSamples)
+    {
+        FILE *file = fopen(filename.c_str(), "r+b");
+        if (!file)
+            throw Error("AudioWriter::DeleteFrontSamples: cannot open file: " + filename);
+
+        const int NumChannels = 2;
+        uint32_t oldDataOffset;
+        if (fseek(file, 4, SEEK_SET))
+        {
+            fclose(file);
+            throw Error("AudioWriter::DeleteFrontSamples: cannot seek for old data offset");
+        }
+
+        if (1 != fread(&oldDataOffset, sizeof(oldDataOffset), 1, file))
+        {
+            fclose(file);
+            throw Error("AudioWriter::DeleteFrontSamples: cannot read old data offset");
+        }
+
+        uint32_t newDataOffset = oldDataOffset + (4 * NumChannels * numSamples);
+
+        if (fseek(file, 4, SEEK_SET))
+        {
+            fclose(file);
+            throw Error("AudioWriter::DeleteFrontSamples: cannot seek for new data offset");
+        }
+
+        if (1 != fwrite(&newDataOffset, sizeof(newDataOffset), 1, file))
+        {
+            fclose(file);
+            throw Error("AudioWriter::DeleteFrontSamples: cannot write new data offset");
+        }
+
+        fclose(file);
     }
 
     void AudioWriter::StartNewFile(std::string _outFileName)
