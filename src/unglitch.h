@@ -23,6 +23,49 @@ namespace unglitch
 
     typedef std::vector<float> FloatVector;
 
+    struct GapInfo
+    {
+        size_t offset;
+        size_t length;
+
+        GapInfo(size_t _offset, size_t _length)
+            : offset(_offset)
+            , length(_length)
+            {}
+
+        size_t Center() const { return offset + (length/2); }
+    };
+
+    typedef std::vector<GapInfo> GapList;
+
+    class GapFinder
+    {
+    private:
+        GapList gaplist;
+        size_t silenceOffset;
+        size_t silentSamples;
+        size_t totalSamples;
+
+    public:
+        GapFinder()
+        {
+            Reset();
+        }
+
+        void Reset()
+        {
+            gaplist.clear();
+            silenceOffset = 0;
+            silentSamples = 0;
+            totalSamples = 0;
+        }
+
+        void Process(const FloatVector &buffer);
+        size_t TotalSamples() const { return totalSamples; }
+        const GapList& SilentGaps() const { return gaplist; }
+        void Print() const;
+    };
+
     inline float PeakValue(const FloatVector & buffer)
     {
         using namespace std;
@@ -127,7 +170,6 @@ namespace unglitch
         static std::string OutProgramFileName(std::string prefix, int hour);
         bool IsStartingNextProgram(int hour, long programPosition, const FloatVector& leftBuffer, const FloatVector& rightBuffer, long &boundary) const;
         static FloatVector SplitBuffer(FloatVector& buffer, long offset);
-        static void EatBufferFront(FloatVector& buffer, long offset);
         static void Append(FloatVector &target, const FloatVector& source);
         static bool Overlap(double a, double b, double x, double y)
         {
@@ -140,7 +182,6 @@ namespace unglitch
         }
 
         static void PrintProgramSummary(const std::string& filename, const GlitchRemover &remover);
-        static void AdjustProgramLength(const std::string& filename, const FloatVector &buffer, long rawLengthSamples);
     };
 
     class AudioReader   // reads .au files
@@ -292,6 +333,7 @@ namespace unglitch
         const float sampleLimit;
         float programPeak;
         GlitchGraph graph;
+        GapFinder gapFinder;
 
         static const int ChunkSamples = 1000;
         static const size_t MaxGlitchChunks = 3;
@@ -311,8 +353,9 @@ namespace unglitch
             {}
 
         void Fix(FloatVector& left, FloatVector& right);
-        void Flush();
         void WriteChunk(const Chunk &chunk);
+        void Flush();
+        void AdjustProgramLength(const std::string& filename);
 
         int GlitchCount() const
         {

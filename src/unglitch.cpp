@@ -413,8 +413,6 @@ namespace unglitch
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
-        bool bufferingFront = false;    // are we buffering the first couple of minutes of audio? (helps find silent periods for deleting filler)
-        FloatVector leftFiller;         // buffer of left channel only, at front of second, third, ... program hours (for finding silence gaps)
         long position = 0;
         long boundary = 0;
         long programPosition = 0;
@@ -452,43 +450,22 @@ namespace unglitch
             if ((nsamples-position > MinSplitSamples) && IsStartingNextProgram(hour, programPosition, leftBuffer, rightBuffer, boundary))
             {
                 ++hour;
-                bufferingFront = true;
 
                 // Split buffers into before/after the boundary.
                 FloatVector leftBefore = SplitBuffer(leftBuffer, boundary);
                 FloatVector rightBefore = SplitBuffer(rightBuffer, boundary);
                 remover.Fix(leftBefore, rightBefore);
-                remover.Flush();
-
-                PrintProgramSummary(writer.OutFileName(), remover);                    
-                remover.ResetProgram();
 
                 string prevFileName = writer.OutFileName();
-                writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
+                remover.Flush();
+                PrintProgramSummary(prevFileName, remover);
+                remover.ResetProgram();
 
-                if (leftFiller.size() > 0)
-                {
-                    AdjustProgramLength(prevFileName, leftFiller, programPosition);
-                    leftFiller.clear();
-                }
+                writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
+                remover.AdjustProgramLength(prevFileName);
 
                 cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
-                programPosition = 0;    // program position includes any skipped filler at front; needed by IsStartingNextProgram()
-            }
-
-            if (bufferingFront)
-            {
-                if (MinutesFromSamples(leftFiller.size()) > 2.5)
-                {
-                    // We have captured enough of the front of the program.
-                    bufferingFront = false;
-                }
-                else
-                {
-                    // Buffer up all suspected filler so that if we can't find the transition between filler
-                    // and program, we give up and dump all the filler to the output and keep going.
-                    Append(leftFiller, leftBuffer);
-                }
+                programPosition = 0;    // needed by IsStartingNextProgram()
             }
 
             remover.Fix(leftBuffer, rightBuffer);
@@ -496,119 +473,13 @@ namespace unglitch
             position += blockLength;
             programPosition += blockLength;
         }
- 
+
+        string finalFileName = writer.OutFileName();
         remover.Flush();
-        PrintProgramSummary(writer.OutFileName(), remover);                    
+        PrintProgramSummary(finalFileName, remover);                    
         remover.ResetProgram();
-
-        if (leftFiller.size() > 0)
-        {
-            string lastFileName = writer.OutFileName();
-            writer.Close();
-            AdjustProgramLength(lastFileName, leftFiller, programPosition);
-            leftFiller.clear();
-        }
-    }
-
-    void Project::AdjustProgramLength(const std::string& filename, const FloatVector &buffer, long rawLengthSamples)
-    {
-        using namespace std;
-
-        struct GapInfo
-        {
-            size_t offset;
-            size_t length;
-
-            GapInfo(size_t _offset, size_t _length)
-                : offset(_offset)
-                , length(_length)
-                {}
-
-            size_t Center() const { return offset + (length/2); }
-        };
-
-        const double IdealProgramMinutes = 58.5;
-        const double RawProgramMinutes = MinutesFromSamples(rawLengthSamples);
-        if (RawProgramMinutes < IdealProgramMinutes + 0.9)
-        {
-            cout << "NOTE: Program is too short to truncate: " << TimeStamp(rawLengthSamples) << endl;
-            return;
-        }
-
-        // Detect end of filler. There should be between 1.0 and 2.5 minutes of filler.
-        // Filler ends with WMFE announcer speaking "... and Daytona Beach" or "... for all devices".
-        // Detect the generic pattern: [speech, silence, music] after at least 1.0 minutes.
-
-        // Find all gaps of silence in the buffer.
-        const double minSilenceSeconds = 0.6;       // least duration we consider a silent period
-        const size_t minSilenceSamples = static_cast<size_t>(minSilenceSeconds * SamplingRate);
-        const float amplitudeThreshold = 0.01;      // how loud can we get before not considered silent
-        vector<GapInfo> gaplist;
-        const size_t buflen = buffer.size();
-        size_t silenceOffset = 0;
-        size_t silentSamples = 0;
-        for (size_t i=0; i < buflen; ++i)
-        {
-            if (abs(buffer[i]) < amplitudeThreshold)
-            {
-                if (silentSamples == 0)
-                    silenceOffset = i;
-                ++silentSamples;
-            }
-            else
-            {
-                if (silentSamples >= minSilenceSamples)
-                    gaplist.push_back(GapInfo(silenceOffset, silentSamples));
-                silentSamples = 0;
-            }
-        }
-
-        // Note: we deliberately ignore any residual silence at the very end.
-        // We want to find only silent periods before non-silent periods.
-
-#if DEBUG_DUMP_SILENT_PERIODS
-        for (auto gap : gaplist)
-            cout << "SILENCE: offset=" << TimeStamp(gap.offset) 
-                << ", duration=" << setprecision(3) << SecondsFromSamples(gap.length) 
-                << endl;
-#endif
-
-        const double ToleranceSeconds = 5.0;
-        double bestError = 1.0e6;
-        size_t bestCenter = 0;
-        
-        // Find the center-of-silence point that most closely fits a program length of 0:58:30.
-        for (auto gap : gaplist)
-        {
-            // Find the sample offset of the middle of each silent period.
-            size_t center = gap.Center();
-            
-            // Calculate how long the resulting audio would be if we chopped off the front here.
-            double candidateLengthMinutes = MinutesFromSamples(rawLengthSamples - center);
-
-            // Find error from ideal program length
-            double errorSeconds = 60.0 * abs(IdealProgramMinutes - candidateLengthMinutes);
-            if (errorSeconds < bestError)
-            {
-                bestError = errorSeconds;
-                bestCenter = center;
-            }
-        }
-
-        cout << "ADJUST: Best candidate program length=" 
-            << TimeStamp(rawLengthSamples - bestCenter) 
-            << ", error=" << setprecision(3) << bestError << " seconds."
-            << endl;
-
-        if (bestError < ToleranceSeconds)
-        {
-            cout << "ADJUST: Deleting samples from front of file: " << filename << endl;
-            AudioWriter::DeleteFrontSamples(filename, bestCenter);
-        }
-        else
-        {
-            cout << "ADJUST: Not adjusting program length because error is outside tolerance limit." << endl;
-        }
+        writer.Close();
+        remover.AdjustProgramLength(finalFileName);
     }
 
     bool Project::IsStartingNextProgram(
@@ -697,20 +568,6 @@ namespace unglitch
 
         buffer.resize(length-offset);
         return front;
-    }
-
-    void Project::EatBufferFront(FloatVector& buffer, long offset)
-    {
-        // Extract the beginning 'offset' samples from 'buffer' and return them.
-        // Remove those samples from the beginning of 'buffer' itself.
-        const long length = static_cast<long>(buffer.size());
-        if (offset<0 || offset>length)
-            throw Error("EatBufferFront: invalid offset");
-
-        for (long i=offset; i < length; ++i)
-            buffer[i-offset] = buffer[i];
-
-        buffer.resize(length-offset);
     }
 
     void Project::Append(FloatVector &target, const FloatVector& source)
@@ -1152,6 +1009,7 @@ namespace unglitch
         if (peak > programPeak)
             programPeak = peak;
 
+        gapFinder.Process(chunk.left);  // use left channel only for finding all silence gaps
         writer.WriteChunk(chunk);
     }  
 
@@ -1177,6 +1035,63 @@ namespace unglitch
             partial.Clear();
         }
     }
+
+    void GlitchRemover::AdjustProgramLength(const std::string& filename)
+    {
+        using namespace std;
+
+#if DEBUG_DUMP_SILENT_PERIODS
+        gapFinder.Print();
+#endif
+
+        const size_t rawLengthSamples = gapFinder.TotalSamples();
+        const double ToleranceSeconds = 15.0;
+        const double IdealProgramMinutes = 58.5;
+        const double MinProgramMinutes = IdealProgramMinutes - (ToleranceSeconds / 60.0);  // never chop audio shorter than this many minutes
+
+        double bestError = 1.0e6;
+        size_t bestCenter = 0;
+
+        // Find the center-of-silence point that most closely fits a program length of 0:58:30.
+        for (const GapInfo& gap : gapFinder.SilentGaps())
+        {
+            // Find the sample offset of the middle of each silent period.
+            size_t center = gap.Center();
+            
+            // Calculate how long the resulting audio would be if we chopped off the front here.
+            double candidateLengthMinutes = MinutesFromSamples(rawLengthSamples - center);
+            if (candidateLengthMinutes < MinProgramMinutes)
+                break;
+
+            // Find error from ideal program length
+            double errorSeconds = 60.0 * abs(IdealProgramMinutes - candidateLengthMinutes);
+            if (errorSeconds < bestError)
+            {
+                bestError = errorSeconds;
+                bestCenter = center;
+            }
+        }
+
+        if (bestCenter > 0)
+        {
+            cout << "ADJUST: Best candidate program length=" 
+                << TimeStamp(rawLengthSamples - bestCenter) 
+                << ", error=" << setprecision(3) << bestError << " seconds."
+                << endl;
+                
+            if (bestError < ToleranceSeconds)
+            {
+                cout << "ADJUST: Deleting samples from front of file: " << filename << endl;
+                AudioWriter::DeleteFrontSamples(filename, bestCenter);
+            }
+            else
+                cout << "ADJUST: Not adjusting program length because error is outside tolerance limit." << endl;
+        }
+        else
+            cout << "ADJUST: Did not find a suitable silence gap for removing filler." << endl;
+
+        gapFinder.Reset();
+    }    
 
     int GlitchRemover::ChunkListSampleCount() const
     {
@@ -1268,6 +1183,47 @@ namespace unglitch
             return std::min(GlitchGraph::HEIGHT_LIMIT, tally.at(minute));
 
         return 0;
+    }
+
+    void GapFinder::Process(const FloatVector &buffer)
+    {
+        using namespace std;
+
+        static const double MinSilenceSeconds  = 0.6;    // least duration we consider a silent period
+        static const float  AmplitudeThreshold = 0.01;   // how loud can we get before not considered silent
+
+        const size_t MinSilenceSamples = static_cast<size_t>(MinSilenceSeconds * SamplingRate);
+
+        const size_t buflen = buffer.size();
+
+        for (size_t i=0; i < buflen; ++i)
+        {
+            if (abs(buffer[i]) < AmplitudeThreshold)
+            {
+                if (silentSamples == 0)
+                    silenceOffset = totalSamples + i;
+                ++silentSamples;
+            }
+            else
+            {
+                if (silentSamples >= MinSilenceSamples)
+                    gaplist.push_back(GapInfo(silenceOffset, silentSamples));
+                silentSamples = 0;
+            }
+        }
+
+        totalSamples += buflen;
+    }    
+
+    void GapFinder::Print() const
+    {
+        using namespace std;
+
+        cout << "GAPS: count=" << gaplist.size() << endl;
+        for (const GapInfo& gap : gaplist)
+        {
+            cout << "GAPS: offset=" << TimeStamp(gap.offset) << ", length=" << TimeStamp(gap.length) << endl;
+        }
     }
 }
 
