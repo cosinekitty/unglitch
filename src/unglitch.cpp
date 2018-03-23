@@ -7,7 +7,6 @@
 #include "unglitch.h"
 
 #define DEBUG_DUMP_HISTOGRAMS 0
-#define DEBUG_DUMP_SILENT_PERIODS 1
 
 /*
 	<wavetrack name="2017-12-10" channel="0" linked="1" mute="0" solo="0" height="160" minimized="0" isSelected="1" rate="44100" gain="1.0" pan="0.0">
@@ -1040,10 +1039,6 @@ namespace unglitch
     {
         using namespace std;
 
-#if DEBUG_DUMP_SILENT_PERIODS
-        gapFinder.Print();
-#endif
-
         const size_t rawLengthSamples = gapFinder.TotalSamples();
         const double ToleranceSeconds = 15.0;
         const double IdealProgramMinutes = 58.5;
@@ -1078,7 +1073,7 @@ namespace unglitch
                 << TimeStamp(rawLengthSamples - bestCenter) 
                 << ", error=" << setprecision(3) << bestError << " seconds."
                 << endl;
-                
+
             if (bestError < ToleranceSeconds)
             {
                 cout << "ADJUST: Deleting samples from front of file: " << filename << endl;
@@ -1207,24 +1202,16 @@ namespace unglitch
             else
             {
                 if (silentSamples >= MinSilenceSamples)
+                {                    
+                    cout << "GAP: offset=" << TimeStamp(silenceOffset) << ", length=" << TimeStamp(silentSamples) << endl;
                     gaplist.push_back(GapInfo(silenceOffset, silentSamples));
+                }
                 silentSamples = 0;
             }
         }
 
         totalSamples += buflen;
     }    
-
-    void GapFinder::Print() const
-    {
-        using namespace std;
-
-        cout << "GAPS: count=" << gaplist.size() << endl;
-        for (const GapInfo& gap : gaplist)
-        {
-            cout << "GAPS: offset=" << TimeStamp(gap.offset) << ", length=" << TimeStamp(gap.length) << endl;
-        }
-    }
 }
 
 int main(int argc, const char *argv[])

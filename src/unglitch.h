@@ -63,7 +63,6 @@ namespace unglitch
         void Process(const FloatVector &buffer);
         size_t TotalSamples() const { return totalSamples; }
         const GapList& SilentGaps() const { return gaplist; }
-        void Print() const;
     };
 
     inline float PeakValue(const FloatVector & buffer)
