@@ -24,16 +24,19 @@ namespace unglitch
     typedef std::vector<float> FloatVector;
 
     struct GapInfo
-    {
-        size_t offset;
-        size_t length;
+    {        
+        size_t offset;      // post-processed sample offset
+        size_t length;      // number of silent samples
+        size_t front;       // original, pre-filtered sample offset
 
-        GapInfo(size_t _offset, size_t _length)
+        GapInfo(size_t _offset, size_t _length, size_t _front)
             : offset(_offset)
             , length(_length)
+            , front(_front)
             {}
 
-        size_t Center() const { return offset + (length/2); }
+        size_t OriginalCenter() const { return front + (length / 2); }
+        size_t FilteredCenter() const { return offset + (length / 2); }
     };
 
     typedef std::vector<GapInfo> GapList;
@@ -42,7 +45,8 @@ namespace unglitch
     {
     private:
         GapList gaplist;
-        size_t silenceOffset;
+        size_t silenceFront;    // pre-filtered data offset (before removing glitches)
+        size_t silenceOffset;   // post-filtered data offset (glitches removed)
         size_t silentSamples;
         size_t totalSamples;
 
@@ -55,12 +59,13 @@ namespace unglitch
         void Reset()
         {
             gaplist.clear();
+            silenceFront = 0;
             silenceOffset = 0;
             silentSamples = 0;
             totalSamples = 0;
         }
 
-        void Process(const FloatVector &buffer);
+        void Process(const FloatVector &buffer, size_t front);
         size_t TotalSamples() const { return totalSamples; }
         const GapList& SilentGaps() const { return gaplist; }
     };
@@ -354,7 +359,7 @@ namespace unglitch
         void Fix(FloatVector& left, FloatVector& right);
         void WriteChunk(const Chunk &chunk);
         void Flush();
-        void AdjustProgramLength(const std::string& filename);
+        void AdjustProgramLength(const std::string& filename, size_t programLengthSamples);
 
         int GlitchCount() const
         {

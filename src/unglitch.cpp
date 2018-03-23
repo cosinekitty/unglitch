@@ -461,16 +461,17 @@ namespace unglitch
                 remover.ResetProgram();
 
                 writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
-                remover.AdjustProgramLength(prevFileName);
+                remover.AdjustProgramLength(prevFileName, programPosition);
 
                 cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
-                programPosition = 0;    // needed by IsStartingNextProgram()
+                programPosition = boundary;
             }
+            else
+                programPosition += blockLength;
 
             remover.Fix(leftBuffer, rightBuffer);
 
             position += blockLength;
-            programPosition += blockLength;
         }
 
         string finalFileName = writer.OutFileName();
@@ -478,7 +479,7 @@ namespace unglitch
         PrintProgramSummary(finalFileName, remover);                    
         remover.ResetProgram();
         writer.Close();
-        remover.AdjustProgramLength(finalFileName);
+        remover.AdjustProgramLength(finalFileName, programPosition);
     }
 
     bool Project::IsStartingNextProgram(
@@ -1008,7 +1009,7 @@ namespace unglitch
         if (peak > programPeak)
             programPeak = peak;
 
-        gapFinder.Process(chunk.left);  // use left channel only for finding all silence gaps
+        gapFinder.Process(chunk.left, chunk.position - programStartPosition);  // use left channel only for finding all silence gaps
         writer.WriteChunk(chunk);
     }  
 
@@ -1035,26 +1036,22 @@ namespace unglitch
         }
     }
 
-    void GlitchRemover::AdjustProgramLength(const std::string& filename)
+    void GlitchRemover::AdjustProgramLength(const std::string& filename, size_t programLengthSamples)
     {
         using namespace std;
 
-        const size_t rawLengthSamples = gapFinder.TotalSamples();
-        const double ToleranceSeconds = 15.0;
+        const double ToleranceSeconds = 5.0;
         const double IdealProgramMinutes = 58.5;
         const double MinProgramMinutes = IdealProgramMinutes - (ToleranceSeconds / 60.0);  // never chop audio shorter than this many minutes
 
         double bestError = 1.0e6;
-        size_t bestCenter = 0;
+        const GapInfo *bestGap = nullptr;
 
         // Find the center-of-silence point that most closely fits a program length of 0:58:30.
         for (const GapInfo& gap : gapFinder.SilentGaps())
         {
-            // Find the sample offset of the middle of each silent period.
-            size_t center = gap.Center();
-            
             // Calculate how long the resulting audio would be if we chopped off the front here.
-            double candidateLengthMinutes = MinutesFromSamples(rawLengthSamples - center);
+            double candidateLengthMinutes = MinutesFromSamples(programLengthSamples - gap.OriginalCenter());
             if (candidateLengthMinutes < MinProgramMinutes)
                 break;
 
@@ -1063,21 +1060,21 @@ namespace unglitch
             if (errorSeconds < bestError)
             {
                 bestError = errorSeconds;
-                bestCenter = center;
+                bestGap = &gap;
             }
         }
 
-        if (bestCenter > 0)
+        if (bestGap)
         {
             cout << "ADJUST: Best candidate program length=" 
-                << TimeStamp(rawLengthSamples - bestCenter) 
+                << TimeStamp(programLengthSamples - bestGap->OriginalCenter()) 
                 << ", error=" << setprecision(3) << bestError << " seconds."
                 << endl;
 
             if (bestError < ToleranceSeconds)
             {
-                cout << "ADJUST: Deleting samples from front of file: " << filename << endl;
-                AudioWriter::DeleteFrontSamples(filename, bestCenter);
+                cout << "ADJUST: Deleting " << TimeStamp(bestGap->FilteredCenter()) << " of filtered data from front of file: " << filename << endl;
+                AudioWriter::DeleteFrontSamples(filename, bestGap->FilteredCenter());
             }
             else
                 cout << "ADJUST: Not adjusting program length because error is outside tolerance limit." << endl;
@@ -1180,7 +1177,7 @@ namespace unglitch
         return 0;
     }
 
-    void GapFinder::Process(const FloatVector &buffer)
+    void GapFinder::Process(const FloatVector &buffer, size_t front)
     {
         using namespace std;
 
@@ -1196,15 +1193,21 @@ namespace unglitch
             if (abs(buffer[i]) < AmplitudeThreshold)
             {
                 if (silentSamples == 0)
+                {
                     silenceOffset = totalSamples + i;
+                    silenceFront = front + i;
+                }
                 ++silentSamples;
             }
             else
             {
                 if (silentSamples >= MinSilenceSamples)
                 {                    
-                    cout << "GAP: offset=" << TimeStamp(silenceOffset) << ", length=" << TimeStamp(silentSamples) << endl;
-                    gaplist.push_back(GapInfo(silenceOffset, silentSamples));
+                    cout << "GAP: offset=" << TimeStamp(silenceOffset) 
+                        << ", front=" << TimeStamp(silenceFront)
+                        << ", length=" << TimeStamp(silentSamples) << endl;
+
+                    gaplist.push_back(GapInfo(silenceOffset, silentSamples, silenceFront));
                 }
                 silentSamples = 0;
             }
