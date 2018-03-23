@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <iomanip>
 #include <string>
@@ -397,6 +398,8 @@ namespace unglitch
         bool IsGlitch(float prevPeak, float newPeak, float otherPeak);
         int ChunkListSampleCount() const;
         void CrossFade(Chunk &chunk);
+        static bool IsHeartsOfSpace(const std::string& filename);
+        static int GetInteger(const std::string& text, int start, int length);
     };
 }
 

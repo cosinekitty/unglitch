@@ -461,17 +461,16 @@ namespace unglitch
                 remover.ResetProgram();
 
                 writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
-                remover.AdjustProgramLength(prevFileName, programPosition);
+                remover.AdjustProgramLength(prevFileName, programPosition + boundary);
 
                 cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
-                programPosition = boundary;
+                programPosition = 0;
             }
-            else
-                programPosition += blockLength;
 
             remover.Fix(leftBuffer, rightBuffer);
 
             position += blockLength;
+            programPosition += leftBuffer.size();   // works whether or not we just split the program
         }
 
         string finalFileName = writer.OutFileName();
@@ -1036,15 +1035,66 @@ namespace unglitch
         }
     }
 
+    int GlitchRemover::GetInteger(const std::string& text, int start, int length)
+    {
+        int value = 0;
+
+        for (int i=start; i < start + length; ++i)
+        {
+            if (text[i] < '0' || text[i] > '9')
+                throw Error("Expected digit at offset " + std::to_string(i) + " in string '" + text + "'");
+
+            value = (10 * value) + (text[i] - '0');
+        }
+
+        return value;
+    }
+
+    bool GlitchRemover::IsHeartsOfSpace(const std::string& filename)
+    {
+        using namespace std;
+
+        // "Hearts of Space" programs are the fourth hour on a Saturday night.
+        // Such a filename looks like: "cleaned-2018-03-17-4.au"
+        //                              012345678901234567890123
+
+        if (filename.length() != 23)
+            throw Error("Unexpected output file format: " + filename);
+
+        int year  = GetInteger(filename,  8, 4);
+        int month = GetInteger(filename, 13, 2);
+        int day   = GetInteger(filename, 16, 2);
+        int hour  = GetInteger(filename, 19, 1);
+
+        if (hour == 4)        
+        {
+            // Is this date on a Saturday?
+            tm time_in;
+            memset(&time_in, 0, sizeof(time_in));
+            time_in.tm_hour = 12;
+            time_in.tm_year = year - 1900;
+            time_in.tm_mon = month - 1;
+            time_in.tm_mday = day;
+
+            time_t time_temp = mktime(&time_in);
+
+            const tm * time_out = localtime(&time_temp);
+            cout << "HOS: day of week=" << time_out->tm_wday << " for file " << filename << endl;
+            return time_out->tm_wday == 6;
+        }
+
+        return false;
+    }    
+
     void GlitchRemover::AdjustProgramLength(const std::string& filename, size_t programLengthSamples)
     {
         using namespace std;
 
         const double ToleranceSeconds = 5.0;
-        const double IdealProgramMinutes = 58.5;
+        const double IdealProgramMinutes = IsHeartsOfSpace(filename) ? 59.0 : 58.5;
         const double MinProgramMinutes = IdealProgramMinutes - (ToleranceSeconds / 60.0);  // never chop audio shorter than this many minutes
 
-        double bestError = 1.0e6;
+        double bestError = -1.0;
         const GapInfo *bestGap = nullptr;
 
         // Find the center-of-silence point that most closely fits a program length of 0:58:30.
@@ -1057,10 +1107,10 @@ namespace unglitch
 
             // Find error from ideal program length
             double errorSeconds = 60.0 * abs(IdealProgramMinutes - candidateLengthMinutes);
-            if (errorSeconds < bestError)
+            if (!bestGap || (errorSeconds < bestError))
             {
-                bestError = errorSeconds;
                 bestGap = &gap;
+                bestError = errorSeconds;
             }
         }
 
@@ -1071,9 +1121,26 @@ namespace unglitch
                 << ", error=" << setprecision(3) << bestError << " seconds."
                 << endl;
 
+            cout << "BESTGAP: offset=" << TimeStamp(bestGap->offset) 
+                << ", front=" << TimeStamp(bestGap->front)
+                << ", length=" << TimeStamp(bestGap->length) 
+                << endl;
+
+            cout << "POSTFILTER: Actual candidate length = "
+                << TimeStamp(gapFinder.TotalSamples())
+                << " - "
+                << TimeStamp(bestGap->FilteredCenter())
+                << " = "
+                << TimeStamp(gapFinder.TotalSamples() - bestGap->FilteredCenter())
+                << endl;
+
             if (bestError < ToleranceSeconds)
             {
-                cout << "ADJUST: Deleting " << TimeStamp(bestGap->FilteredCenter()) << " of filtered data from front of file: " << filename << endl;
+                cout << "ADJUST: Deleting " << TimeStamp(bestGap->FilteredCenter()) 
+                    << " of filtered data from front of file: " 
+                    << filename 
+                    << endl;
+
                 AudioWriter::DeleteFrontSamples(filename, bestGap->FilteredCenter());
             }
             else
