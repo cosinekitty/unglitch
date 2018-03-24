@@ -20,6 +20,7 @@
 
 namespace unglitch
 {
+    class Chunk;
     class GlitchRemover;
 
     typedef std::vector<float> FloatVector;
@@ -66,7 +67,7 @@ namespace unglitch
             totalSamples = 0;
         }
 
-        void Process(const FloatVector &buffer, size_t front);
+        void Process(const Chunk &chunk, long programStartPosition);
         size_t TotalSamples() const { return totalSamples; }
         const GapList& SilentGaps() const { return gaplist; }
     };

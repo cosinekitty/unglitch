@@ -1008,7 +1008,7 @@ namespace unglitch
         if (peak > programPeak)
             programPeak = peak;
 
-        gapFinder.Process(chunk.left, chunk.position - programStartPosition);  // use left channel only for finding all silence gaps
+        gapFinder.Process(chunk, programStartPosition);
         writer.WriteChunk(chunk);
     }  
 
@@ -1244,7 +1244,7 @@ namespace unglitch
         return 0;
     }
 
-    void GapFinder::Process(const FloatVector &buffer, size_t front)
+    void GapFinder::Process(const Chunk &chunk, long programStartPosition)
     {
         using namespace std;
 
@@ -1253,11 +1253,13 @@ namespace unglitch
 
         const size_t MinSilenceSamples = static_cast<size_t>(MinSilenceSeconds * SamplingRate);
 
-        const size_t buflen = buffer.size();
+        const size_t buflen = chunk.left.size();
+        const size_t front = chunk.position - programStartPosition;
 
         for (size_t i=0; i < buflen; ++i)
         {
-            if (abs(buffer[i]) < AmplitudeThreshold)
+            float mono = max(abs(chunk.left[i]), abs(chunk.right[i]));
+            if (mono < AmplitudeThreshold)
             {
                 if (silentSamples == 0)
                 {
