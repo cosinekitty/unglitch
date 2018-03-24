@@ -389,8 +389,6 @@ namespace unglitch
         long glitchStartSample;
         int glitchCount;
         AudioWriter& writer;
-        float prevPeakLeft;
-        float prevPeakRight;
         Chunk lastGoodChunk;
         std::deque<Chunk> chunklist;
         Chunk partial;
@@ -410,8 +408,6 @@ namespace unglitch
             , glitchStartSample(0)
             , glitchCount(0)
             , writer(_writer)
-            , prevPeakLeft(0.0f)
-            , prevPeakRight(0.0f)
             , sampleLimit(_sampleLimit)
             , programPeak(0.0f)
             {}
@@ -454,7 +450,6 @@ namespace unglitch
 
     private:
         void ProcessChunk(Chunk chunk);
-        bool IsGlitch(float prevPeak, float newPeak, float otherPeak);
         int ChunkListSampleCount() const;
         void CrossFade(Chunk &chunk);
         static bool IsHeartsOfSpace(const std::string& filename);

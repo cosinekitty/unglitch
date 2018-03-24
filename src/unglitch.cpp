@@ -911,16 +911,6 @@ namespace unglitch
         position += length;
     }
 
-    bool GlitchRemover::IsGlitch(float prevPeak, float newPeak, float otherPeak)
-    {
-        const float Threshold = 0.27f;
-        const float BadJump = 0.08f;
-
-        return 
-            (newPeak > sampleLimit) ||
-            ((newPeak > Threshold) && (newPeak - prevPeak > BadJump) && (newPeak - otherPeak > BadJump));
-    }
-
     void GlitchRemover::ProcessChunk(Chunk chunk)
     {
         using namespace std;
@@ -932,10 +922,7 @@ namespace unglitch
         // If we were not in a glitch and everything still looks fine,
         // just write this chunk to the output and keep going.
 
-        float newPeakLeft  = PeakValue(chunk.left);
-        float newPeakRight = PeakValue(chunk.right);
-
-        if (IsGlitch(prevPeakLeft, newPeakLeft, newPeakRight) || IsGlitch(prevPeakRight, newPeakRight, newPeakLeft))
+        if (PeakValue(chunk.left) > sampleLimit || PeakValue(chunk.right) > sampleLimit)
         {
             // This chunk is glitchy.
             // Tally each glitchy chunk we find in the graph, whether or not we end up removing it.
@@ -956,17 +943,11 @@ namespace unglitch
                 cout << "WARNING: Canceling removal of glitch at " << TimeStamp(glitchStartSample) << endl;
                 Flush();
                 lastGoodChunk = chunk;
-                prevPeakLeft = newPeakLeft;
-                prevPeakRight = newPeakRight;
             }
         }
         else
         {
             // This chunk is not glitchy.
-
-            prevPeakLeft = newPeakLeft;
-            prevPeakRight = newPeakRight;
-
             if (chunklist.empty())
             {
                 // We are continuing a good section. This is the most common case. (We hope.)
