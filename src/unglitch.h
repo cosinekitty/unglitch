@@ -41,7 +41,21 @@ namespace unglitch
         size_t FilteredCenter() const { return offset + (length / 2); }
     };
 
-    typedef std::vector<GapInfo> GapList;
+    struct PreGapInfo
+    {
+        size_t front;       // index of first silent sample
+        size_t length;      // number of silent samples
+
+        PreGapInfo(size_t _front, size_t _length)
+            : front(_front)
+            , length(_length)
+            {}
+
+        size_t Center() const { return front + (length / 2); }
+    };
+
+    typedef std::vector<GapInfo> GapList;    
+    typedef std::vector<PreGapInfo> PreGapList;    
 
     class GapFinder
     {
@@ -70,6 +84,31 @@ namespace unglitch
         void Process(const Chunk &chunk, long programStartPosition);
         size_t TotalSamples() const { return totalSamples; }
         const GapList& SilentGaps() const { return gaplist; }
+    };
+
+    class PreScanGapFinder
+    {
+    private:
+        PreGapList gaplist;
+        size_t totalSamples;
+        const size_t sampleDelay;
+        double leftBias;
+        double rightBias;
+        size_t silentSamples;
+        size_t silenceFront;
+
+    public:
+        PreScanGapFinder(size_t _sampleDelay)
+            : totalSamples(0)
+            , sampleDelay(_sampleDelay)
+            , leftBias(0.0)
+            , rightBias(0.0)
+            , silentSamples(0)
+            , silenceFront(0)
+            {}
+        
+        void Process(const FloatVector& leftBlock, const FloatVector &rightBlock);
+        const PreGapList& SilentGaps() const { return gaplist; }
     };
 
     inline float PeakValue(const FloatVector & buffer)
@@ -151,6 +190,17 @@ namespace unglitch
                 {}
         };
 
+        struct ScanInfo
+        {
+            DcBias  bias;
+            PreGapList gaplist;
+
+            ScanInfo(DcBias _bias, const PreGapList & _gaplist)
+                : bias(_bias)
+                , gaplist(_gaplist)
+                {}
+        };
+
     public:
         void Load(const char *inFileName);
         void Convert(std::string outFilePrefix);
@@ -172,7 +222,7 @@ namespace unglitch
             double rightBias
         );
 
-        DcBias FindBias() const;
+        ScanInfo PreScan() const;
         static std::string OutProgramFileName(std::string prefix, int hour);
         bool IsStartingNextProgram(int hour, long programPosition, const FloatVector& leftBuffer, const FloatVector& rightBuffer, long &boundary) const;
         static FloatVector SplitBuffer(FloatVector& buffer, long offset);

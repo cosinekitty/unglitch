@@ -43,6 +43,11 @@ namespace unglitch
         return static_cast<size_t>(seconds * SamplingRate);
     }
 
+    inline size_t SamplesFromMinutes(double minutes)
+    {
+        return SamplesFromSeconds(60.0 * minutes);
+    }
+
     std::string TimeStamp(long offset);
 
     long NumericAttribute(tinyxml2::XMLElement *elem, const char *name)
@@ -222,6 +227,74 @@ namespace unglitch
     }
 #endif
 
+    size_t Length(const FloatVector& left, const FloatVector& right)
+    {
+        using namespace std;
+
+        if (left.size() != right.size())
+            throw Error("Left and right buffers are different lengths: " + to_string(left.size()) + ", " + to_string(right.size()));
+
+        return left.size();
+    }
+
+    void PreScanGapFinder::Process(const FloatVector& left, const FloatVector& right)
+    {
+        using namespace std;
+
+        static const double MinSilenceSeconds  = 0.5;    // least duration we consider a silent period
+        static const float  AmplitudeThreshold = 0.006;   // how loud can we get before not considered silent
+        const size_t MinSilenceSamples = SamplesFromSeconds(MinSilenceSeconds);
+
+        size_t length = Length(left, right);
+        size_t preSamples = totalSamples;       // total number of samples processed before this block
+        totalSamples += length;                 // total number of samples processed, including this block
+
+        if (preSamples < sampleDelay)
+        {
+            // We are not yet ready to find silent periods because we 
+            // are still in the initial phase of estimating DC bias.
+
+            for (float data : left)
+                leftBias += data;
+
+            for (float data : right)
+                rightBias += data;
+
+            if (totalSamples < sampleDelay)
+                return;     // not yet ready to calculate bias or find silent periods
+
+            // Initialize bias values and fall through to start finding silent periods
+            leftBias /= totalSamples;
+            rightBias /= totalSamples;
+            cout << "ESTBIAS: " << TimeStamp(totalSamples) << " ==> left=" << leftBias << ", right=" << rightBias << endl;
+        }
+
+        // Look for silent periods centered around estimated DC bias for each channel.
+        for (size_t i=0; i < length; ++i)
+        {
+            double signal = max(abs(left[i] - leftBias), abs(right[i] - rightBias));
+            if (signal < AmplitudeThreshold)
+            {
+                if (silentSamples == 0)
+                    silenceFront = preSamples + i;
+                ++silentSamples;
+            }
+            else
+            {
+                if (silentSamples >= MinSilenceSamples)
+                {
+                    gaplist.push_back(PreGapInfo(silenceFront, silentSamples));
+
+                    cout << "PREGAP #" << setw(3) << gaplist.size()
+                        << " : front=" << TimeStamp(silenceFront)
+                        << ", length=" << TimeStamp(silentSamples) 
+                        << endl;
+                }
+                silentSamples = 0;
+            }
+        }
+    }
+
     int Project::FoldTally(
         std::vector<int>& folded, 
         const std::vector<int>& histogram,
@@ -283,7 +356,7 @@ namespace unglitch
         throw Error("FindLimit: Could not find keep limit.");
     }
 
-    Project::DcBias Project::FindBias() const
+    Project::ScanInfo Project::PreScan() const
     {
         // Measure the DC offset in both channels.
         if (channelList.size() != 2)
@@ -296,6 +369,7 @@ namespace unglitch
         if (nblocks != rightTrack.NumBlocks())
             throw Error("Left and right tracks have different number of blocks.");
 
+        PreScanGapFinder gapFinder(SamplesFromMinutes(20.0));
         std::vector<int> leftHistogram(NUM_HISTOGRAM_BINS);
         std::vector<int> rightHistogram(NUM_HISTOGRAM_BINS);
 
@@ -339,6 +413,7 @@ namespace unglitch
 
             HistogramTally(leftHistogram, leftBuffer);
             HistogramTally(rightHistogram, rightBuffer);
+            gapFinder.Process(leftBuffer, rightBuffer);
 
             position += length;
         }
@@ -353,7 +428,7 @@ namespace unglitch
 
         double limit = FindLimit(leftHistogram, leftBias, rightHistogram, rightBias);
 
-        return DcBias(leftBias, rightBias, limit);
+        return ScanInfo(DcBias(leftBias, rightBias, limit), gapFinder.SilentGaps());
     }
 
     std::string Project::OutProgramFileName(std::string prefix, int hour)
@@ -371,19 +446,18 @@ namespace unglitch
             << endl;
 
         cout << remover.FormatGlitchGraph() << endl;
-    }
-    
+    }    
 
     void Project::Convert(std::string outFilePrefix)
     {
         using namespace std;
 
-        cout << "Finding DC bias..." << endl;
-        DcBias bias = FindBias();
-        double headroom_dB = -20.0 * log10(bias.limit);
+        cout << "Prescanning..." << endl;
+        ScanInfo scan = PreScan();
+        double headroom_dB = -20.0 * log10(scan.bias.limit);
         cout << fixed 
-            << setprecision(5) << "Bias: left=" << bias.left << ", right=" << bias.right 
-            << ", limit=" << bias.limit 
+            << setprecision(5) << "Bias: left=" << scan.bias.left << ", right=" << scan.bias.right 
+            << ", limit=" << scan.bias.limit 
             << setprecision(1) << ", headroom=" << headroom_dB << " dB"
             << endl;
 
@@ -408,7 +482,7 @@ namespace unglitch
         int hour = 1;
         AudioWriter writer(OutProgramFileName(outFilePrefix, hour), SamplingRate, 2);
 
-        GlitchRemover remover(writer, bias.limit);
+        GlitchRemover remover(writer, scan.bias.limit);
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
@@ -441,10 +515,10 @@ namespace unglitch
             rightReader.Read(rightBuffer.data(), blockLength);
 
             for (float &data : leftBuffer)
-                data -= bias.left;
+                data -= scan.bias.left;
 
             for (float &data : rightBuffer)
-                data -= bias.right;
+                data -= scan.bias.right;
 
             if ((nsamples-position > MinSplitSamples) && IsStartingNextProgram(hour, programPosition, leftBuffer, rightBuffer, boundary))
             {
@@ -1251,7 +1325,7 @@ namespace unglitch
         static const double MinSilenceSeconds  = 0.6;    // least duration we consider a silent period
         static const float  AmplitudeThreshold = 0.01;   // how loud can we get before not considered silent
 
-        const size_t MinSilenceSamples = static_cast<size_t>(MinSilenceSeconds * SamplingRate);
+        const size_t MinSilenceSamples = SamplesFromSeconds(MinSilenceSeconds);
 
         const size_t buflen = chunk.left.size();
         const size_t front = chunk.position - programStartPosition;
