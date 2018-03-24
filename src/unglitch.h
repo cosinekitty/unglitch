@@ -224,7 +224,15 @@ namespace unglitch
 
         ScanInfo PreScan() const;
         static std::string OutProgramFileName(std::string prefix, int hour);
-        bool IsStartingNextProgram(int hour, long programPosition, const FloatVector& leftBuffer, const FloatVector& rightBuffer, long &boundary) const;
+
+        bool IsStartingNextProgram(
+            long &boundary,     // out: offset into block to split program (if function returns true)
+            int hour, 
+            long recordingPosition,
+            long programPosition, 
+            long blockLength, 
+            const PreGapList &gaplist) const;
+
         static FloatVector SplitBuffer(FloatVector& buffer, long offset);
         static void Append(FloatVector &target, const FloatVector& source);
         static bool Overlap(double a, double b, double x, double y)

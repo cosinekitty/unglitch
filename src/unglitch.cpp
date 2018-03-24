@@ -520,7 +520,8 @@ namespace unglitch
             for (float &data : rightBuffer)
                 data -= scan.bias.right;
 
-            if ((nsamples-position > MinSplitSamples) && IsStartingNextProgram(hour, programPosition, leftBuffer, rightBuffer, boundary))
+            if ((nsamples-position > MinSplitSamples) && 
+                IsStartingNextProgram(boundary, hour, position, programPosition, blockLength, scan.gaplist))
             {
                 ++hour;
 
@@ -556,67 +557,34 @@ namespace unglitch
     }
 
     bool Project::IsStartingNextProgram(
-        int hour,
+        long &boundary,     // out: offset into block to split program (if function returns true)
+        int hour, 
+        long recordingPosition,
         long programPosition, 
-        const FloatVector& leftBuffer, 
-        const FloatVector& rightBuffer, 
-        long &boundary) const
+        long blockLength, 
+        const PreGapList &gaplist) const
     {
         using namespace std;
 
-        boundary = 0;
-
-        if (leftBuffer.size() != rightBuffer.size())
-            throw Error("Buffers different lengths in IsStartingNextProgram");
-
-        const long length = static_cast<long>(leftBuffer.size());
+        boundary = 0;   // always initialize output parameter
 
         // We are starting a new program if we find a silent period
         // somewhere between 58 and 61 minutes into the current program.
         const double minProgramMinutes = (hour==1) ? 58.25 : 59.25;
         const double maxProgramMinutes = 2.0 + minProgramMinutes;
-        const double samplesPerSecond = static_cast<double>(SamplingRate);
-        const double samplesPerMinute = samplesPerSecond * 60.0;
-        double minutesBegin = programPosition / samplesPerMinute;
-        double minutesEnd = minutesBegin + (length / samplesPerMinute);
+        double minutesBegin = MinutesFromSamples(programPosition);
+        double minutesEnd = MinutesFromSamples(programPosition + blockLength - 1);
         if (Overlap(minutesBegin, minutesEnd, minProgramMinutes, maxProgramMinutes))
         {
-            const double minSilenceSeconds = 0.4;       // least duration we consider a silent period
-            const float amplitudeThreshold = 0.01;      // how loud can we get before not considered silent
-            bool inSilence = false;
-            for (long i=0; i < length; ++i)
+            // This block is inside the window of times where we expect a program boundary.
+            // If we find a silent period whose center is inside this block,
+            // assume that is the program boundary.
+            for (const PreGapInfo & gap : gaplist)
             {
-                float height = max(abs(leftBuffer[i]), abs(rightBuffer[i]));
-                if (height < amplitudeThreshold)
+                long center = gap.Center();
+                if (center >= recordingPosition && center <= recordingPosition + blockLength)
                 {
-                    if (!inSilence)
-                    {
-                        boundary = i;
-                        inSilence = true;
-                    }
-                }
-                else
-                {
-                    if (inSilence)
-                    {
-                        inSilence = false;
-                        long gap = i - boundary;
-                        double silentSeconds = gap / samplesPerSecond;
-                        if (silentSeconds >= minSilenceSeconds)
-                        {
-                            boundary += gap/2;   // split right in middle of silence
-                            return true;
-                        }
-                    }
-                }
-            }
-            if (inSilence)
-            {
-                long gap = length - boundary;
-                double silentSeconds = gap / samplesPerSecond;
-                if (silentSeconds >= minSilenceSeconds)
-                {
-                    boundary += gap/2;   // split right in middle of silence
+                    boundary = center - recordingPosition;
                     return true;
                 }
             }
