@@ -24,6 +24,7 @@
 namespace unglitch
 {
     const int SamplingRate = 44100;
+    bool Verbose = false;
 
     inline double MinutesFromSamples(size_t samples)
     {
@@ -975,8 +976,17 @@ namespace unglitch
             else
             {
                 // We just found the end of a glitch that is short enough to remove.
-                //cout << "Removing glitch at " << TimeStamp(glitchStartSample) << endl;
                 ++glitchCount;
+
+                if (Verbose)
+                {
+                    cout << "GLITCH # " 
+                        << setw(4) << glitchCount 
+                        << " @ " << TimeStamp(glitchStartSample) 
+                        << " ==> removing " << chunklist.size() 
+                        << endl;
+                }
+
                 chunklist.clear();
                 CrossFade(chunk);
             }
@@ -1333,18 +1343,35 @@ int main(int argc, const char *argv[])
     using namespace std;
     using namespace unglitch;
 
-    if (argc != 2)
+    if (argc < 2)
     {
         cerr << 
             "USAGE:\n"
             "\n"
-            "    unglitch projname\n"
+            "    unglitch projname [options...]\n"
             "        Given an Audacity project projname.aup, creates\n"
             "        a series of approximately hour-long audio files\n"
             "        that are normalized and have glitches removed.\n"
+            "\n"
+            "OPTIONS:\n"
+            "\n"
+            "-v\n"
+            "    Generate verbose debug output.\n"
+            "\n"
             << endl;
 
         return 1;
+    }
+
+    for (int i=2; i < argc; ++i)
+    {
+        if (!strcmp(argv[i], "-v"))
+            Verbose = true;
+        else
+        {
+            cerr << "ERROR: Unknown option '" << argv[i] << "'" << endl;
+            return 1;
+        }
     }
 
     string projname(argv[1]);
