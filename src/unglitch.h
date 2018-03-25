@@ -203,7 +203,7 @@ namespace unglitch
 
     public:
         void Load(const char *inFileName);
-        void Convert(std::string outFilePrefix);
+        void Convert(std::string projectName);
 
     private:
         void InitDataPath(const char *inFileName);
@@ -222,7 +222,7 @@ namespace unglitch
             double rightBias
         );
 
-        ScanInfo PreScan() const;
+        ScanInfo PreScan(const std::string &projname) const;
         static std::string OutProgramFileName(std::string prefix, int hour);
 
         bool IsStartingNextProgram(

@@ -6,8 +6,6 @@
 
 #include "unglitch.h"
 
-#define DEBUG_DUMP_HISTOGRAMS 0
-
 /*
 	<wavetrack name="2017-12-10" channel="0" linked="1" mute="0" solo="0" height="160" minimized="0" isSelected="1" rate="44100" gain="1.0" pan="0.0">
 		<waveclip offset="0.00000000">
@@ -25,6 +23,7 @@ namespace unglitch
 {
     const int SamplingRate = 44100;
     bool Verbose = false;
+    bool DumpHistograms = false;
 
     inline double MinutesFromSamples(size_t samples)
     {
@@ -186,12 +185,11 @@ namespace unglitch
         }
     }
 
-#if DEBUG_DUMP_HISTOGRAMS
     void WriteHistogram(
-        const char *outCsvFileName,
+        std::string outCsvFileName,
         const std::vector<int> &histogram)
     {
-        FILE *outfile = fopen(outCsvFileName, "wt");
+        FILE *outfile = fopen(outCsvFileName.c_str(), "wt");
         if (!outfile)
             throw Error("Cannot open histogram output csv file.");
 
@@ -226,7 +224,6 @@ namespace unglitch
 
         fclose(outfile);
     }
-#endif
 
     size_t Length(const FloatVector& left, const FloatVector& right)
     {
@@ -357,7 +354,7 @@ namespace unglitch
         throw Error("FindLimit: Could not find keep limit.");
     }
 
-    Project::ScanInfo Project::PreScan() const
+    Project::ScanInfo Project::PreScan(const std::string &projname) const
     {
         // Measure the DC offset in both channels.
         if (channelList.size() != 2)
@@ -422,10 +419,11 @@ namespace unglitch
         double leftBias = leftSum / position;
         double rightBias = rightSum / position;
 
-#if DEBUG_DUMP_HISTOGRAMS
-        WriteHistogram("left.csv", leftHistogram);
-        WriteHistogram("right.csv", rightHistogram);
-#endif
+        if (DumpHistograms)
+        {
+            WriteHistogram("histogram-" + projname + "-left.csv", leftHistogram);
+            WriteHistogram("histogram-" + projname + "-right.csv", rightHistogram);
+        }
 
         double limit = FindLimit(leftHistogram, leftBias, rightHistogram, rightBias);
 
@@ -449,12 +447,14 @@ namespace unglitch
         cout << remover.FormatGlitchGraph() << endl;
     }    
 
-    void Project::Convert(std::string outFilePrefix)
+    void Project::Convert(std::string projname)
     {
         using namespace std;
 
+        string outFilePrefix = string("cleaned-") + projname;        
+
         cout << "Prescanning..." << endl;
-        ScanInfo scan = PreScan();
+        ScanInfo scan = PreScan(projname);
         double headroom_dB = -20.0 * log10(scan.bias.limit);
         cout << fixed 
             << setprecision(5) << "Bias: left=" << scan.bias.left << ", right=" << scan.bias.right 
@@ -1336,6 +1336,9 @@ int main(int argc, const char *argv[])
             "\n"
             "OPTIONS:\n"
             "\n"
+            "-h\n"
+            "    Write CSV files containing amplitude histograms.\n"
+            "\n"
             "-v\n"
             "    Generate verbose debug output.\n"
             "\n"
@@ -1346,25 +1349,27 @@ int main(int argc, const char *argv[])
 
     for (int i=2; i < argc; ++i)
     {
-        if (!strcmp(argv[i], "-v"))
+        const char *opt = argv[i];
+        if (!strcmp(opt, "-v"))
             Verbose = true;
+        else if (!strcmp(opt, "-h"))
+            DumpHistograms = true;
         else
         {
-            cerr << "ERROR: Unknown option '" << argv[i] << "'" << endl;
+            cerr << "ERROR: Unknown option '" << opt << "'" << endl;
             return 1;
         }
     }
 
     string projname(argv[1]);
     string inAudacityProjectFileName = projname + ".aup";
-    string outAudioPrefix = string("cleaned-") + projname;
 
     try
     {
         Project project;
         project.Load(inAudacityProjectFileName.c_str());
         cout << "Loaded project: " << inAudacityProjectFileName << endl;
-        project.Convert(outAudioPrefix);
+        project.Convert(projname);
         cout << "Finished converting audio." << endl;
     }
     catch (const Error &error)
