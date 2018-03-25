@@ -4,6 +4,8 @@
 #ifndef __DDC_UNGLITCH_H
 #define __DDC_UNGLITCH_H
 
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -20,7 +22,7 @@
 
 namespace unglitch
 {
-    class Chunk;
+    struct Chunk;
     class GlitchRemover;
 
     typedef std::vector<float> FloatVector;
@@ -430,9 +432,9 @@ namespace unglitch
         float HeadroomDecibels() const
         {
             if (programPeak <= 0.0)
-                return 144.0;
+                return 144.0f;
 
-            return -20.0 * log10(programPeak);
+            return static_cast<float>(-20.0 * log10(programPeak));
         }
 
         std::string FormatGlitchGraph() const

@@ -61,7 +61,7 @@ namespace unglitch
         return atol(attr);
     }
 
-    double FloatAttribute(tinyxml2::XMLElement *elem, const char *name)
+    float FloatAttribute(tinyxml2::XMLElement *elem, const char *name)
     {
         using namespace std;
 
@@ -69,7 +69,7 @@ namespace unglitch
         if (!attr)
             throw Error(string("Cannot find attribute ") + name);
         
-        return atof(attr);
+        return static_cast<float>(atof(attr));
     }
 
     void WaveTrack::Parse(tinyxml2::XMLElement *trackElem)
@@ -177,7 +177,7 @@ namespace unglitch
             if (data < -1.0 || data > +1.0)
                 throw Error("HistogramTally: data out of range.");
 
-            int bin = std::floor(((data + 1.0) / 2.0) * (NUM_HISTOGRAM_BINS - 1));
+            int bin = static_cast<int>(std::floor(((data + 1.0) / 2.0) * (NUM_HISTOGRAM_BINS - 1)));
             if (bin < 0 || bin >= NUM_HISTOGRAM_BINS)
                 throw Error("HistogramTally: bin out of range.");
 
@@ -240,7 +240,7 @@ namespace unglitch
         using namespace std;
 
         static const double MinSilenceSeconds  = 0.5;    // least duration we consider a silent period
-        static const float  AmplitudeThreshold = 0.006;   // how loud can we get before not considered silent
+        static const float  AmplitudeThreshold = 0.006f; // how loud can we get before not considered silent
         const size_t MinSilenceSamples = SamplesFromSeconds(MinSilenceSeconds);
 
         size_t length = Length(left, right);
@@ -427,7 +427,7 @@ namespace unglitch
 
         double limit = FindLimit(leftHistogram, leftBias, rightHistogram, rightBias);
 
-        return ScanInfo(DcBias(leftBias, rightBias, limit), gapFinder.SilentGaps());
+        return ScanInfo(DcBias(static_cast<float>(leftBias), static_cast<float>(rightBias), static_cast<float>(limit)), gapFinder.SilentGaps());
     }
 
     std::string Project::OutProgramFileName(std::string prefix, int hour)
@@ -671,7 +671,7 @@ namespace unglitch
             throw Error("Unable to seek to EOF in " + inFileName);
 
         long size = ftell(infile);
-        if (size < dataOffset)
+        if (size < static_cast<long>(dataOffset))
             throw Error("Unable to determine file position in " + inFileName);
 
         nsamples = (size - dataOffset) / (channels * sizeof(float));
@@ -1282,7 +1282,7 @@ namespace unglitch
         using namespace std;
 
         static const double MinSilenceSeconds  = 0.6;    // least duration we consider a silent period
-        static const float  AmplitudeThreshold = 0.01;   // how loud can we get before not considered silent
+        static const float  AmplitudeThreshold = 0.01f;  // how loud can we get before not considered silent
 
         const size_t MinSilenceSamples = SamplesFromSeconds(MinSilenceSeconds);
 
