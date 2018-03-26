@@ -293,6 +293,30 @@ namespace unglitch
         }
     }
 
+    Project::Project(const std::vector<double>& manualSplitPointsInSeconds)
+    {
+        using namespace std;
+
+        // Use -1 as a sentinel that the split point should be automatic.
+        for (int i=0; i < MAX_SPLIT_POINTS; ++i)
+            manualSplitSamples[i] = -1L;
+
+        // We can split between hours (1,2), (2,3), or (3,4).
+        // Classify the split points by which program boundary they correspond to.
+        for (double seconds : manualSplitPointsInSeconds)
+        {
+            // Round to the nearest hour mark.
+            int hour = static_cast<int>(floor(0.5 + (seconds / 3600.0)));
+            if (hour < 1 || hour > MAX_SPLIT_POINTS)
+                throw Error("Invalid split point at offset = " + to_string(seconds) + " seconds.");
+            
+            if (manualSplitSamples[hour-1] != -1L)
+                throw Error("Redundant split point after hour " + to_string(hour));
+
+            manualSplitSamples[hour-1] = static_cast<long>(SamplesFromSeconds(seconds));
+        }
+    }
+
     int Project::FoldTally(
         std::vector<int>& folded, 
         const std::vector<int>& histogram,
@@ -525,6 +549,7 @@ namespace unglitch
                 IsStartingNextProgram(boundary, hour, position, programPosition, blockLength, scan.gaplist))
             {
                 ++hour;
+                cout << "SPLIT: " << TimeStamp(position + boundary) << endl;
 
                 // Split buffers into before/after the boundary.
                 FloatVector leftBefore = SplitBuffer(leftBuffer, boundary);
@@ -539,7 +564,6 @@ namespace unglitch
                 writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
                 remover.AdjustProgramLength(prevFileName, programPosition + boundary);
 
-                cout << "Splitting program at " << TimeStamp(position + boundary) << endl;
                 programPosition = 0;
             }
 
@@ -569,24 +593,37 @@ namespace unglitch
 
         boundary = 0;   // always initialize output parameter
 
-        // We are starting a new program if we find a silent period
-        // somewhere between 58 and 61 minutes into the current program.
-        const double minProgramMinutes = (hour==1) ? 58.25 : 59.25;
-        const double maxProgramMinutes = 2.0 + minProgramMinutes;
-        double minutesBegin = MinutesFromSamples(programPosition);
-        double minutesEnd = MinutesFromSamples(programPosition + blockLength - 1);
-        if (Overlap(minutesBegin, minutesEnd, minProgramMinutes, maxProgramMinutes))
+        if ((hour >= 1) && (hour <= MAX_SPLIT_POINTS) && (manualSplitSamples[hour-1] > 0))
         {
-            // This block is inside the window of times where we expect a program boundary.
-            // If we find a silent period whose center is inside this block,
-            // assume that is the program boundary.
-            for (const PreGapInfo & gap : gaplist)
+            // Manual override for the split position.
+            long split = manualSplitSamples[hour-1];
+            if (split >= recordingPosition && split < recordingPosition + blockLength)
             {
-                long center = gap.Center();
-                if (center >= recordingPosition && center <= recordingPosition + blockLength)
+                boundary = split - recordingPosition;
+                return true;
+            }
+        }
+        else
+        {
+            // We are starting a new program if we find a silent period
+            // somewhere between 58 and 61 minutes into the current program.
+            const double minProgramMinutes = (hour==1) ? 58.25 : 59.25;
+            const double maxProgramMinutes = 2.0 + minProgramMinutes;
+            double minutesBegin = MinutesFromSamples(programPosition);
+            double minutesEnd = MinutesFromSamples(programPosition + blockLength - 1);
+            if (Overlap(minutesBegin, minutesEnd, minProgramMinutes, maxProgramMinutes))
+            {
+                // This block is inside the window of times where we expect a program boundary.
+                // If we find a silent period whose center is inside this block,
+                // assume that is the program boundary.
+                for (const PreGapInfo & gap : gaplist)
                 {
-                    boundary = center - recordingPosition;
-                    return true;
+                    long center = gap.Center();
+                    if (center >= recordingPosition && center <= recordingPosition + blockLength)
+                    {
+                        boundary = center - recordingPosition;
+                        return true;
+                    }
                 }
             }
         }
@@ -1316,7 +1353,30 @@ namespace unglitch
         }
 
         totalSamples += buflen;
-    }    
+    }
+
+    double ParseTimeOffset(const char *text)
+    {
+        using namespace std;
+
+        // Parse a string of the format "h:mm:ss.mmm"
+        //                               012345678901
+        int hours, minutes;
+        double seconds;
+        if (3 != sscanf(text, "%d:%d:%lf", &hours, &minutes, &seconds))
+            throw Error("Split point after '-s' must be formatted as h:mm:ss.sss");
+
+        if (hours<0 || hours>4)
+            throw Error("Hours value after '-s' must be 0..4");
+
+        if (minutes<0 || minutes>59)
+            throw Error("Minutes value after '-s' must be 0..59");
+
+        if (seconds<0.0 || seconds>=60.0)
+            throw Error("Seconds value after '-s' must be 0..59.99999");
+
+        return seconds + 60.0*(minutes + 60*hours);
+    }
 }
 
 int main(int argc, const char *argv[])
@@ -1339,6 +1399,9 @@ int main(int argc, const char *argv[])
             "-h\n"
             "    Write CSV files containing amplitude histograms.\n"
             "\n"
+            "-s h:mm:ss.mmm\n"
+            "    Force program split at specified time index.\n"
+            "\n"
             "-v\n"
             "    Generate verbose debug output.\n"
             "\n"
@@ -1347,26 +1410,37 @@ int main(int argc, const char *argv[])
         return 1;
     }
 
-    for (int i=2; i < argc; ++i)
-    {
-        const char *opt = argv[i];
-        if (!strcmp(opt, "-v"))
-            Verbose = true;
-        else if (!strcmp(opt, "-h"))
-            DumpHistograms = true;
-        else
-        {
-            cerr << "ERROR: Unknown option '" << opt << "'" << endl;
-            return 1;
-        }
-    }
-
-    string projname(argv[1]);
-    string inAudacityProjectFileName = projname + ".aup";
-
     try
     {
-        Project project;
+        vector<double> manualSplitPointsInSeconds;
+
+        for (int i=2; i < argc; ++i)
+        {
+            const char *opt = argv[i];
+            if (!strcmp(opt, "-h"))
+                DumpHistograms = true;
+            else if (!strcmp(opt, "-v"))
+                Verbose = true;
+            else if (!strcmp(opt, "-s"))
+            {
+                if (i+1 < argc)
+                    manualSplitPointsInSeconds.push_back(ParseTimeOffset(argv[++i]));
+                else
+                {
+                    cerr << "ERROR: Missing time offset after '-s'" << endl;
+                    return 1;
+                }
+            }
+            else
+            {
+                cerr << "ERROR: Unknown option '" << opt << "'" << endl;
+                return 1;
+            }
+        }
+
+        string projname(argv[1]);
+        string inAudacityProjectFileName = projname + ".aup";
+        Project project(manualSplitPointsInSeconds);
         project.Load(inAudacityProjectFileName.c_str());
         cout << "Loaded project: " << inAudacityProjectFileName << endl;
         project.Convert(projname);

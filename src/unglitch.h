@@ -173,11 +173,14 @@ namespace unglitch
         const WaveBlock& Block(int index) const { return blockList.at(index); }
     };
 
+    const int MAX_SPLIT_POINTS = 3; // can split between hours (1,2), (2,3), or (3,4).
+
     class Project
     {
     private:
         std::vector<WaveTrack> channelList;
         std::string dataPath;   // e.g. "/home/don/radio/edit/2017-12-10_data/"
+        long manualSplitSamples[MAX_SPLIT_POINTS];
 
         struct DcBias
         {
@@ -204,6 +207,7 @@ namespace unglitch
         };
 
     public:
+        Project(const std::vector<double>& manualSplitPointsInSeconds);
         void Load(const char *inFileName);
         void Convert(std::string projectName);
 
