@@ -498,11 +498,8 @@ namespace unglitch
         if (nblocks != rightTrack.NumBlocks())
             throw Error("Left and right tracks have different number of blocks.");
 
-        const long nsamples = leftTrack.NumSamples();
-        if (nsamples != rightTrack.NumSamples())
+        if (leftTrack.NumSamples() != rightTrack.NumSamples())
             throw Error("Left and right tracks have different number of samples.");
-
-        const long MinSplitSamples = 60L * SamplingRate;  // do not split within final minute of audio
 
         int hour = 1;
         AudioWriter writer(OutProgramFileName(outFilePrefix, hour), SamplingRate, 2);
@@ -545,8 +542,7 @@ namespace unglitch
             for (float &data : rightBuffer)
                 data -= scan.bias.right;
 
-            if ((nsamples-position > MinSplitSamples) && 
-                IsStartingNextProgram(boundary, hour, position, programPosition, blockLength, scan.gaplist))
+            if (IsStartingNextProgram(boundary, hour, position, programPosition, blockLength, scan.gaplist))
             {
                 ++hour;
                 cout << "SPLIT: " << TimeStamp(position + boundary) << endl;
@@ -593,36 +589,40 @@ namespace unglitch
 
         boundary = 0;   // always initialize output parameter
 
-        if ((hour >= 1) && (hour <= MAX_SPLIT_POINTS) && (manualSplitSamples[hour-1] > 0))
+        if ((hour >= 1) && (hour <= MAX_SPLIT_POINTS))
         {
-            // Manual override for the split position.
             long split = manualSplitSamples[hour-1];
-            if (split >= recordingPosition && split < recordingPosition + blockLength)
+            if (split > 0)
             {
-                boundary = split - recordingPosition;
-                return true;
-            }
-        }
-        else
-        {
-            // We are starting a new program if we find a silent period
-            // somewhere between 58 and 61 minutes into the current program.
-            const double minProgramMinutes = (hour==1) ? 58.25 : 59.25;
-            const double maxProgramMinutes = 2.0 + minProgramMinutes;
-            double minutesBegin = MinutesFromSamples(programPosition);
-            double minutesEnd = MinutesFromSamples(programPosition + blockLength - 1);
-            if (Overlap(minutesBegin, minutesEnd, minProgramMinutes, maxProgramMinutes))
-            {
-                // This block is inside the window of times where we expect a program boundary.
-                // If we find a silent period whose center is inside this block,
-                // assume that is the program boundary.
-                for (const PreGapInfo & gap : gaplist)
+                if (split >= recordingPosition && split < recordingPosition + blockLength)
                 {
-                    long center = gap.Center();
-                    if (center >= recordingPosition && center <= recordingPosition + blockLength)
+                    // Manual override for the split position.
+                    boundary = split - recordingPosition;
+                    return true;
+                }
+            }
+            else
+            {
+                // Look for automatic split position.
+                // We are starting a new program if we find a silent period
+                // somewhere between 58 and 61 minutes into the current program.
+                const double minProgramMinutes = (hour==1) ? 58.25 : 59.25;
+                const double maxProgramMinutes = 2.0 + minProgramMinutes;
+                double minutesBegin = MinutesFromSamples(programPosition);
+                double minutesEnd = MinutesFromSamples(programPosition + blockLength - 1);
+                if (Overlap(minutesBegin, minutesEnd, minProgramMinutes, maxProgramMinutes))
+                {
+                    // This block is inside the window of times where we expect a program boundary.
+                    // If we find a silent period whose center is inside this block,
+                    // assume that is the program boundary.
+                    for (const PreGapInfo & gap : gaplist)
                     {
-                        boundary = center - recordingPosition;
-                        return true;
+                        long center = gap.Center();
+                        if (center >= recordingPosition && center <= recordingPosition + blockLength)
+                        {
+                            boundary = center - recordingPosition;
+                            return true;
+                        }
                     }
                 }
             }
