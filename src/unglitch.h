@@ -251,7 +251,10 @@ namespace unglitch
             ;
         }
 
-        static void PrintProgramSummary(const std::string& filename, const GlitchRemover &remover);
+        static void PrintProgramSummary(
+            const std::string& filename, 
+            const GlitchRemover &remover,
+            long programDurationSamples);
     };
 
     class AudioReader   // reads .au files
@@ -380,7 +383,7 @@ namespace unglitch
     public:
         void Reset();
         void Increment(long programSampleOffset);
-        std::string Format() const;
+        std::string Format(size_t programDurationMinutes) const;
 
     private:
         int Height(size_t minute) const;
@@ -441,9 +444,9 @@ namespace unglitch
             return static_cast<float>(-20.0 * log10(programPeak));
         }
 
-        std::string FormatGlitchGraph() const
+        std::string FormatGlitchGraph(size_t programDurationMinutes) const
         {
-            return graph.Format();
+            return graph.Format(programDurationMinutes);
         }
 
         void ResetProgram()

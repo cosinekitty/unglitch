@@ -459,16 +459,24 @@ namespace unglitch
         return prefix + "-" + std::to_string(hour) + ".au";
     }
 
-    void Project::PrintProgramSummary(const std::string& filename, const GlitchRemover &remover)
+    void Project::PrintProgramSummary(
+        const std::string& filename, 
+        const GlitchRemover &remover,
+        long programDurationSamples)
     {
         using namespace std;
 
-        cout << filename << " : " << remover.GlitchCount() << " glitches, peak="
+        cout << filename << " : " 
+            << "duration=" << TimeStamp(programDurationSamples) << ", "
+            << remover.GlitchCount() << " glitches, peak="
             << setprecision(5) << remover.ProgramPeak() 
             << ", headroom=" << setprecision(1) << remover.HeadroomDecibels() << " dB." 
             << endl;
 
-        cout << remover.FormatGlitchGraph() << endl;
+        const size_t roundedUpMinutes = static_cast<size_t>(
+            ceil(MinutesFromSamples(static_cast<size_t>(programDurationSamples))));
+
+        cout << remover.FormatGlitchGraph(roundedUpMinutes) << endl;
     }    
 
     void Project::Convert(std::string projname)
@@ -554,7 +562,7 @@ namespace unglitch
 
                 string prevFileName = writer.OutFileName();
                 remover.Flush();
-                PrintProgramSummary(prevFileName, remover);
+                PrintProgramSummary(prevFileName, remover, programPosition + boundary);
                 remover.ResetProgram();
 
                 writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
@@ -571,7 +579,7 @@ namespace unglitch
 
         string finalFileName = writer.OutFileName();
         remover.Flush();
-        PrintProgramSummary(finalFileName, remover);                    
+        PrintProgramSummary(finalFileName, remover, programPosition);
         remover.ResetProgram();
         writer.Close();
         remover.AdjustProgramLength(finalFileName, programPosition);
@@ -1251,26 +1259,25 @@ namespace unglitch
         ++tally.at(minutes);
     }
 
-    std::string GlitchGraph::Format() const
+    std::string GlitchGraph::Format(size_t duration) const
     {
         using namespace std;
 
-        size_t duration = tally.size();
+        const size_t horizontal = duration + 1;
 
         int maxHeight = 0;
-        for (size_t minute=0; minute < duration; ++minute)
+        for (size_t minute=0; minute < horizontal; ++minute)
         {
             int height = Height(minute);
             if (height > maxHeight)
                 maxHeight = height;
         }
 
-        int horizontal = duration;
-        int vertical = maxHeight + 1;       // always include horizontal time axis "0----+----1---"
+        const int vertical = maxHeight + 1;       // always include horizontal time axis "0----+----1---"
 
         vector<char> image(vertical * horizontal, ' ');
 
-        for (size_t minute=0; minute < duration; ++minute)
+        for (size_t minute=0; minute < horizontal; ++minute)
         {            
             int height = Height(minute);
             char marker = (height == HEIGHT_LIMIT) ? '@' : '|';
@@ -1282,7 +1289,7 @@ namespace unglitch
         string text;
         for (int y = vertical-1; y >= 0; --y)
         {
-            for (int x = 0; x < horizontal; ++x)
+            for (size_t x = 0; x < horizontal; ++x)
                 text.push_back(image.at(x + y*horizontal));
             
             // Trim trailing whitespace.
