@@ -21,9 +21,9 @@
 
 namespace unglitch
 {
+    const double HEADROOM_DEFAULT = 9.2;
     const int SamplingRate = 44100;
     bool Verbose = false;
-    bool DumpHistograms = false;
 
     inline double MinutesFromSamples(size_t samples)
     {
@@ -48,6 +48,11 @@ namespace unglitch
         return SamplesFromSeconds(60.0 * minutes);
     }
 
+    inline float PeakFromHeadroom(double headroom_dB)
+    {
+        return static_cast<float>(pow(10.0, -headroom_dB/20.0));
+    }
+
     std::string TimeStamp(long offset);
 
     long NumericAttribute(tinyxml2::XMLElement *elem, const char *name)
@@ -68,7 +73,7 @@ namespace unglitch
         const char *attr = elem->Attribute(name);
         if (!attr)
             throw Error(string("Cannot find attribute ") + name);
-        
+
         return static_cast<float>(atof(attr));
     }
 
@@ -97,11 +102,11 @@ namespace unglitch
         {
             /*
                 <waveblock start="0">
-					<simpleblockfile 
-                        filename="e0031f11.au" 
-                        len="194051" 
-                        min="-0.28178" 
-                        max="0.288315" 
+					<simpleblockfile
+                        filename="e0031f11.au"
+                        len="194051"
+                        min="-0.28178"
+                        max="0.288315"
                         rms="0.068274"
                     />
 				</waveblock>
@@ -158,71 +163,13 @@ namespace unglitch
         //cout << "Loaded xml: " << inFileName << endl;
 
         XMLElement *root = doc.RootElement();
-        for (XMLElement *trackElem = root->FirstChildElement("wavetrack"); trackElem; trackElem = trackElem->NextSiblingElement("wavetrack"))  
+        for (XMLElement *trackElem = root->FirstChildElement("wavetrack"); trackElem; trackElem = trackElem->NextSiblingElement("wavetrack"))
         {
             //cout << "Found wavetrack" << endl;
             channelList.push_back(WaveTrack());
             WaveTrack &track = channelList.back();
             track.Parse(trackElem);
         }
-    }
-
-    const int NUM_FOLDED_BINS = 1000;       // 3 decimal places of resolution in the range [0.0, +1.0].
-    const int NUM_HISTOGRAM_BINS = 2 * NUM_FOLDED_BINS;
-
-    void HistogramTally(std::vector<int> &histogram, const FloatVector &buffer)
-    {
-        for (float data : buffer)
-        {
-            if (data < -1.0 || data > +1.0)
-                throw Error("HistogramTally: data out of range.");
-
-            int bin = static_cast<int>(std::floor(((data + 1.0) / 2.0) * (NUM_HISTOGRAM_BINS - 1)));
-            if (bin < 0 || bin >= NUM_HISTOGRAM_BINS)
-                throw Error("HistogramTally: bin out of range.");
-
-            ++histogram.at(bin);
-        }
-    }
-
-    void WriteHistogram(
-        std::string outCsvFileName,
-        const std::vector<int> &histogram)
-    {
-        FILE *outfile = fopen(outCsvFileName.c_str(), "wt");
-        if (!outfile)
-            throw Error("Cannot open histogram output csv file.");
-
-        fprintf(outfile,"\"floor\",\"count\",\"fraction\"\n");
-
-        int population = 0;
-        int front = -1;
-        int back = -1;
-        for (int i=0; i < NUM_HISTOGRAM_BINS; ++i)
-        {
-            int count = histogram.at(i);
-            if (count != 0)
-            {
-                population += count;
-                back = i;
-                if (front < 0)
-                    front = i;
-            }
-        }
-
-        if (back >= 0)
-        {
-            double delta = 2.0 / NUM_HISTOGRAM_BINS;
-            for (int i = front; i <= back; ++i)
-            {
-                double low = -1.0 + (delta * i);
-                int count = histogram.at(i);
-                double fraction = static_cast<double>(count) / static_cast<double>(population);
-                fprintf(outfile, "%0.3lf,%d,%0.15lf\n", low, count, fraction);
-            }
-        }
-
-        fclose(outfile);
     }
 
     size_t Length(const FloatVector& left, const FloatVector& right)
@@ -249,7 +196,7 @@ namespace unglitch
 
         if (preSamples < sampleDelay)
         {
-            // We are not yet ready to find silent periods because we 
+            // We are not yet ready to find silent periods because we
             // are still in the initial phase of estimating DC bias.
 
             for (float data : left)
@@ -285,7 +232,7 @@ namespace unglitch
 
                     cout << "PREGAP #" << setw(3) << gaplist.size()
                         << " : front=" << TimeStamp(silenceFront)
-                        << ", length=" << TimeStamp(silentSamples) 
+                        << ", length=" << TimeStamp(silentSamples)
                         << endl;
                 }
                 silentSamples = 0;
@@ -309,7 +256,7 @@ namespace unglitch
             int hour = static_cast<int>(floor(0.5 + (seconds / 3600.0)));
             if (hour < 1 || hour > MAX_SPLIT_POINTS)
                 throw Error("Invalid split point at offset = " + to_string(seconds) + " seconds.");
-            
+
             if (manualSplitSamples[hour-1] != -1L)
                 throw Error("Redundant split point after hour " + to_string(hour));
 
@@ -317,68 +264,7 @@ namespace unglitch
         }
     }
 
-    int Project::FoldTally(
-        std::vector<int>& folded, 
-        const std::vector<int>& histogram,
-        double bias)
-    {
-        int population = 0;
-        double delta = 2.0 / NUM_HISTOGRAM_BINS;
-        for (int i=0; i < NUM_HISTOGRAM_BINS; ++i)
-        {
-            int count = histogram.at(i);
-            if (count > 0)
-            {
-                // Calculate the median value of the raw bin.
-                double median = -1.0 + (delta * (i + 0.5));
-
-                // Subtract out the DC bias to get the corrected median value
-                // and take absolute value.
-                double fvalue = std::abs(median - bias);
-
-                // convert to the folded bin index
-                int bin = static_cast<int>(std::floor(0.5 + fvalue*(NUM_FOLDED_BINS - 1)));
-
-                if (bin < 0 || bin >= NUM_FOLDED_BINS)
-                    throw Error("FoldTally: bin is out of bounds: bin=" + std::to_string(bin) + ", i=" + std::to_string(i));
-
-                population += count;
-                folded.at(bin) += count;
-            }
-        }
-
-        return population;
-    }
-
-    double Project::FindLimit(
-        const std::vector<int> & leftHistogram, 
-        double leftBias, 
-        const std::vector<int> & rightHistogram, 
-        double rightBias)
-    {
-        // The input histograms for left and right channels span the range -1.0 to +1.0,
-        // and refer to raw values that still include DC bias.
-        // Subtract the respective biases from both histograms and fold them to
-        // absolute value range 0.0 to +1.0. This makes it easier to determine the
-        // absolute glitch cutoff that keeps the vast majority of sample values.
-        std::vector<int> folded(NUM_FOLDED_BINS);
-        int population = FoldTally(folded, leftHistogram, leftBias);
-        population += FoldTally(folded, rightHistogram, rightBias);
-
-        const int DENOMINATOR = 800000;     // denominator of fraction of extreme samples to discard
-        int keep = population - (population / DENOMINATOR);
-        int total = 0;
-        for (int i=0; i < NUM_FOLDED_BINS; ++i)
-        {
-            total += folded.at(i);
-            if (total >= keep)
-                return static_cast<double>(i) / static_cast<double>(NUM_FOLDED_BINS);
-        }
-
-        throw Error("FindLimit: Could not find keep limit.");
-    }
-
-    Project::ScanInfo Project::PreScan(const std::string &projname) const
+    Project::ScanInfo Project::PreScan() const
     {
         // Measure the DC offset in both channels.
         if (channelList.size() != 2)
@@ -392,8 +278,6 @@ namespace unglitch
             throw Error("Left and right tracks have different number of blocks.");
 
         PreScanGapFinder gapFinder(SamplesFromMinutes(20.0));
-        std::vector<int> leftHistogram(NUM_HISTOGRAM_BINS);
-        std::vector<int> rightHistogram(NUM_HISTOGRAM_BINS);
 
         double leftSum = 0.0;
         double rightSum = 0.0;
@@ -403,7 +287,7 @@ namespace unglitch
         for (int b=0; b < nblocks; ++b)
         {
             const WaveBlock& leftBlock = leftTrack.Block(b);
-            const WaveBlock& rightBlock = rightTrack.Block(b);            
+            const WaveBlock& rightBlock = rightTrack.Block(b);
 
             if (leftBlock.Start() != position)
                 throw Error("Left block not at expected position.");
@@ -413,7 +297,7 @@ namespace unglitch
 
             const long length = leftBlock.Length();
             if (length != rightBlock.Length())
-                throw Error("Left and right blocks have different lengths.");            
+                throw Error("Left and right blocks have different lengths.");
 
             AudioReader leftReader(BlockFileName(leftBlock.Filename()));
             leftReader.AssertChannels(1);
@@ -433,8 +317,6 @@ namespace unglitch
             for (float data : rightBuffer)
                 rightSum += data;
 
-            HistogramTally(leftHistogram, leftBuffer);
-            HistogramTally(rightHistogram, rightBuffer);
             gapFinder.Process(leftBuffer, rightBuffer);
 
             position += length;
@@ -443,15 +325,10 @@ namespace unglitch
         double leftBias = leftSum / position;
         double rightBias = rightSum / position;
 
-        if (DumpHistograms)
-        {
-            WriteHistogram("histogram-" + projname + "-left.csv", leftHistogram);
-            WriteHistogram("histogram-" + projname + "-right.csv", rightHistogram);
-        }
-
-        double limit = FindLimit(leftHistogram, leftBias, rightHistogram, rightBias);
-
-        return ScanInfo(DcBias(static_cast<float>(leftBias), static_cast<float>(rightBias), static_cast<float>(limit)), gapFinder.SilentGaps());
+        return ScanInfo(
+            DcBias(static_cast<float>(leftBias), static_cast<float>(rightBias)),
+            gapFinder.SilentGaps()
+        );
     }
 
     std::string Project::OutProgramFileName(std::string prefix, int hour)
@@ -460,38 +337,39 @@ namespace unglitch
     }
 
     void Project::PrintProgramSummary(
-        const std::string& filename, 
+        const std::string& filename,
         const GlitchRemover &remover,
         long programDurationSamples)
     {
         using namespace std;
 
-        cout << filename << " : " 
+        cout << filename << " : "
             << "duration=" << TimeStamp(programDurationSamples) << ", "
             << remover.GlitchCount() << " glitches, peak="
-            << setprecision(5) << remover.ProgramPeak() 
-            << ", headroom=" << setprecision(1) << remover.HeadroomDecibels() << " dB." 
+            << setprecision(5) << remover.ProgramPeak()
+            << ", headroom=" << setprecision(1) << remover.HeadroomDecibels() << " dB."
             << endl;
 
         const size_t roundedUpMinutes = static_cast<size_t>(
             ceil(MinutesFromSamples(static_cast<size_t>(programDurationSamples))));
 
         cout << remover.FormatGlitchGraph(roundedUpMinutes) << endl;
-    }    
+    }
 
-    void Project::Convert(std::string projname)
+    void Project::Convert(std::string projname, double headroom_dB)
     {
         using namespace std;
 
-        string outFilePrefix = string("cleaned-") + projname;        
+        string outFilePrefix = string("cleaned-") + projname;
+
+        float limit = PeakFromHeadroom(headroom_dB);
 
         cout << "Prescanning..." << endl;
-        ScanInfo scan = PreScan(projname);
-        double headroom_dB = -20.0 * log10(scan.bias.limit);
-        cout << fixed 
-            << setprecision(5) << "Bias: left=" << scan.bias.left << ", right=" << scan.bias.right 
-            << ", limit=" << scan.bias.limit 
+        ScanInfo scan = PreScan();
+        cout << fixed
+            << setprecision(5) << "Bias: left=" << scan.bias.left << ", right=" << scan.bias.right
             << setprecision(1) << ", headroom=" << headroom_dB << " dB"
+            << " (limit=" << setprecision(4) << limit << ")"
             << endl;
 
         // Convert multiple pairs of single-channel audio into a single stereo audio file.
@@ -512,7 +390,7 @@ namespace unglitch
         int hour = 1;
         AudioWriter writer(OutProgramFileName(outFilePrefix, hour), SamplingRate, 2);
 
-        GlitchRemover remover(writer, scan.bias.limit);
+        GlitchRemover remover(writer, limit);
 
         FloatVector leftBuffer;
         FloatVector rightBuffer;
@@ -522,7 +400,7 @@ namespace unglitch
         for (int b=0; b < nblocks; ++b)
         {
             const WaveBlock& leftBlock = leftTrack.Block(b);
-            const WaveBlock& rightBlock = rightTrack.Block(b);            
+            const WaveBlock& rightBlock = rightTrack.Block(b);
 
             if (leftBlock.Start() != position)
                 throw Error("Left block not at expected position.");
@@ -531,7 +409,7 @@ namespace unglitch
                 throw Error("Right block not at expected position.");
 
             if (leftBlock.Length() != rightBlock.Length())
-                throw Error("Left and right blocks have different lengths.");            
+                throw Error("Left and right blocks have different lengths.");
 
             const long blockLength = leftBlock.Length();
 
@@ -587,10 +465,10 @@ namespace unglitch
 
     bool Project::IsStartingNextProgram(
         long &boundary,     // out: offset into block to split program (if function returns true)
-        int hour, 
+        int hour,
         long recordingPosition,
-        long programPosition, 
-        long blockLength, 
+        long programPosition,
+        long blockLength,
         const PreGapList &gaplist) const
     {
         using namespace std;
@@ -698,7 +576,7 @@ namespace unglitch
             throw Error("Cannot read file header for " + inFileName);
 
         if (memcmp(header, "dns.", 4))
-            throw Error("Incorrect au file header in " + inFileName);        
+            throw Error("Incorrect au file header in " + inFileName);
 
         dataOffset = DecodeInt(header, 1*4);
         uint32_t encoding = DecodeInt(header, 3*4);
@@ -756,7 +634,7 @@ namespace unglitch
     {
         long fileOffset = (channels * sizeof(float))*sampleIndex + dataOffset;
         if (fseek(infile, fileOffset, SEEK_SET))
-            throw Error("Unable to seek to sample index " + std::to_string(sampleIndex));            
+            throw Error("Unable to seek to sample index " + std::to_string(sampleIndex));
     }
 
     void AudioReader::Read(float *buffer, int length)
@@ -902,10 +780,10 @@ namespace unglitch
         long hours = minutes / 60L;
         minutes %= 60L;
 
-        return        
-            to_string(hours) + ":" + 
-            Format(minutes, 2) + ":" + 
-            Format(seconds, 2) + "." + 
+        return
+            to_string(hours) + ":" +
+            Format(minutes, 2) + ":" +
+            Format(seconds, 2) + "." +
             Format(millis, 3);
     }
 
@@ -913,7 +791,7 @@ namespace unglitch
     {
         // Break both channels into chunks of ChunkSamples samples.
 
-        // Convert flat (left, right) buffers into chunks.        
+        // Convert flat (left, right) buffers into chunks.
         // There may be a partial chunk left over from the last iteration.
         // If so, extend it to ChunkSamples in length.
         int length = static_cast<int>(left.size());
@@ -977,8 +855,8 @@ namespace unglitch
             {
                 if (chunklist.empty())
                     glitchStartSample = chunk.position;     // this is the very first glitchy chunk in a run
-                
-                // We are in a glitch. Keep saving bad chunks until 
+
+                // We are in a glitch. Keep saving bad chunks until
                 // we decide whether to commit or cancel the glitch removal.
                 chunklist.push_back(chunk);
             }
@@ -1006,10 +884,10 @@ namespace unglitch
 
                 if (Verbose)
                 {
-                    cout << "GLITCH # " 
-                        << setw(4) << glitchCount 
-                        << " @ " << TimeStamp(glitchStartSample) 
-                        << " ==> removing " << chunklist.size() 
+                    cout << "GLITCH # "
+                        << setw(4) << glitchCount
+                        << " @ " << TimeStamp(glitchStartSample)
+                        << " ==> removing " << chunklist.size()
                         << endl;
                 }
 
@@ -1077,9 +955,9 @@ namespace unglitch
         float peak = chunk.Peak();
         if (peak > sampleLimit)
         {
-            cout << "WARNING: Chunk at " << TimeStamp(chunk.position) << " has peak=" 
+            cout << "WARNING: Chunk at " << TimeStamp(chunk.position) << " has peak="
                 << setprecision(5) << peak
-                << " above limit=" << sampleLimit 
+                << " above limit=" << sampleLimit
                 << endl;
         }
 
@@ -1088,7 +966,7 @@ namespace unglitch
 
         gapFinder.Process(chunk, programStartPosition);
         writer.WriteChunk(chunk);
-    }  
+    }
 
     void GlitchRemover::Flush()
     {
@@ -1144,7 +1022,7 @@ namespace unglitch
         int day   = GetInteger(filename, 16, 2);
         int hour  = GetInteger(filename, 19, 1);
 
-        if (hour == 4)        
+        if (hour == 4)
         {
             // Is this date on a Saturday?
             tm time_in;
@@ -1162,7 +1040,7 @@ namespace unglitch
         }
 
         return false;
-    }    
+    }
 
     void GlitchRemover::AdjustProgramLength(const std::string& filename, size_t programLengthSamples)
     {
@@ -1194,14 +1072,14 @@ namespace unglitch
 
         if (bestGap)
         {
-            cout << "ADJUST: Best candidate program length=" 
-                << TimeStamp(programLengthSamples - bestGap->OriginalCenter()) 
+            cout << "ADJUST: Best candidate program length="
+                << TimeStamp(programLengthSamples - bestGap->OriginalCenter())
                 << ", error=" << setprecision(3) << bestError << " seconds."
                 << endl;
 
-            cout << "BESTGAP: offset=" << TimeStamp(bestGap->offset) 
+            cout << "BESTGAP: offset=" << TimeStamp(bestGap->offset)
                 << ", front=" << TimeStamp(bestGap->front)
-                << ", length=" << TimeStamp(bestGap->length) 
+                << ", length=" << TimeStamp(bestGap->length)
                 << endl;
 
             cout << "POSTFILTER: Actual candidate length = "
@@ -1214,9 +1092,9 @@ namespace unglitch
 
             if (bestError < ToleranceSeconds)
             {
-                cout << "ADJUST: Deleting " << TimeStamp(bestGap->FilteredCenter()) 
-                    << " of filtered data from front of file: " 
-                    << filename 
+                cout << "ADJUST: Deleting " << TimeStamp(bestGap->FilteredCenter())
+                    << " of filtered data from front of file: "
+                    << filename
                     << endl;
 
                 AudioWriter::DeleteFrontSamples(filename, bestGap->FilteredCenter());
@@ -1228,7 +1106,7 @@ namespace unglitch
             cout << "ADJUST: Did not find a suitable silence gap for removing filler." << endl;
 
         gapFinder.Reset();
-    }    
+    }
 
     int GlitchRemover::ChunkListSampleCount() const
     {
@@ -1278,7 +1156,7 @@ namespace unglitch
         vector<char> image(vertical * horizontal, ' ');
 
         for (size_t minute=0; minute < horizontal; ++minute)
-        {            
+        {
             int height = Height(minute);
             char marker = (height == HEIGHT_LIMIT) ? '@' : '|';
             image.at(minute) = MinuteTickMark(minute);
@@ -1291,7 +1169,7 @@ namespace unglitch
         {
             for (size_t x = 0; x < horizontal; ++x)
                 text.push_back(image.at(x + y*horizontal));
-            
+
             // Trim trailing whitespace.
             while (!text.empty() && (text.back() == ' '))
                 text.pop_back();
@@ -1311,7 +1189,7 @@ namespace unglitch
             return '+';
 
         return '-';
-    }    
+    }
 
     int GlitchGraph::Height(size_t minute) const
     {
@@ -1348,8 +1226,8 @@ namespace unglitch
             else
             {
                 if (silentSamples >= MinSilenceSamples)
-                {                    
-                    cout << "GAP: offset=" << TimeStamp(silenceOffset) 
+                {
+                    cout << "GAP: offset=" << TimeStamp(silenceOffset)
                         << ", front=" << TimeStamp(silenceFront)
                         << ", length=" << TimeStamp(silentSamples) << endl;
 
@@ -1393,7 +1271,7 @@ int main(int argc, const char *argv[])
 
     if (argc < 2)
     {
-        cerr << 
+        cerr <<
             "USAGE:\n"
             "\n"
             "    unglitch projname [options...]\n"
@@ -1403,8 +1281,10 @@ int main(int argc, const char *argv[])
             "\n"
             "OPTIONS:\n"
             "\n"
-            "-h\n"
-            "    Write CSV files containing amplitude histograms.\n"
+            "-h dB\n"
+            "    Specify desired headroom in decibels, where 0.0 <= dB <= 40.0.\n"
+            "    Any samples that extend into the headroom are considered glitches.\n"
+            "    The default value is " << HEADROOM_DEFAULT << " dB.\n"
             "\n"
             "-s h:mm:ss.mmm\n"
             "    Force program split at specified time index.\n"
@@ -1420,13 +1300,12 @@ int main(int argc, const char *argv[])
     try
     {
         vector<double> manualSplitPointsInSeconds;
+        double headroom = HEADROOM_DEFAULT;
 
         for (int i=2; i < argc; ++i)
         {
             const char *opt = argv[i];
-            if (!strcmp(opt, "-h"))
-                DumpHistograms = true;
-            else if (!strcmp(opt, "-v"))
+            if (!strcmp(opt, "-v"))
                 Verbose = true;
             else if (!strcmp(opt, "-s"))
             {
@@ -1435,6 +1314,29 @@ int main(int argc, const char *argv[])
                 else
                 {
                     cerr << "ERROR: Missing time offset after '-s'" << endl;
+                    return 1;
+                }
+            }
+            else if (!strcmp(opt, "-h"))
+            {
+                if (i+1 < argc)
+                {
+                    const char *text = argv[++i];
+                    if (1 != sscanf(text, "%lf", &headroom))
+                    {
+                        cerr << "ERROR: Invalid headroom '" << text << "' after '-h'" << endl;
+                        return 1;
+                    }
+
+                    if (headroom<0.0 || headroom>40.0)
+                    {
+                        cerr << "ERROR: Headroom value is out of range." << endl;
+                        return 1;
+                    }
+                }
+                else
+                {
+                    cerr << "ERROR: Missing headroom value after '-h'" << endl;
                     return 1;
                 }
             }
@@ -1450,7 +1352,7 @@ int main(int argc, const char *argv[])
         Project project(manualSplitPointsInSeconds);
         project.Load(inAudacityProjectFileName.c_str());
         cout << "Loaded project: " << inAudacityProjectFileName << endl;
-        project.Convert(projname);
+        project.Convert(projname, headroom);
         cout << "Finished converting audio." << endl;
     }
     catch (const Error &error)

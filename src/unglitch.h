@@ -28,7 +28,7 @@ namespace unglitch
     typedef std::vector<float> FloatVector;
 
     struct GapInfo
-    {        
+    {
         size_t offset;      // post-processed sample offset
         size_t length;      // number of silent samples
         size_t front;       // original, pre-filtered sample offset
@@ -56,8 +56,8 @@ namespace unglitch
         size_t Center() const { return front + (length / 2); }
     };
 
-    typedef std::vector<GapInfo> GapList;    
-    typedef std::vector<PreGapInfo> PreGapList;    
+    typedef std::vector<GapInfo> GapList;
+    typedef std::vector<PreGapInfo> PreGapList;
 
     class GapFinder
     {
@@ -108,7 +108,7 @@ namespace unglitch
             , silentSamples(0)
             , silenceFront(0)
             {}
-        
+
         void Process(const FloatVector& leftBlock, const FloatVector &rightBlock);
         const PreGapList& SilentGaps() const { return gaplist; }
     };
@@ -128,7 +128,7 @@ namespace unglitch
         const std::string message;
 
     public:
-        Error(std::string _message) 
+        Error(std::string _message)
             : message(_message)
             {}
 
@@ -186,12 +186,10 @@ namespace unglitch
         {
             float left;
             float right;
-            float limit;
 
-            DcBias(float _left, float _right, float _limit)
+            DcBias(float _left, float _right)
                 : left(_left)
                 , right(_right)
-                , limit(_limit)
                 {}
         };
 
@@ -209,41 +207,28 @@ namespace unglitch
     public:
         Project(const std::vector<double>& manualSplitPointsInSeconds);
         void Load(const char *inFileName);
-        void Convert(std::string projectName);
+        void Convert(std::string projectName, double headroomDecibels);
 
     private:
         void InitDataPath(const char *inFileName);
         std::string BlockFileName(const std::string& rawBlockFileName) const;
 
-        static int FoldTally(
-            std::vector<int>& folded, 
-            const std::vector<int>& histogram,
-            double bias
-        );
-
-        static double FindLimit(
-            const std::vector<int> & leftHistogram, 
-            double leftBias, 
-            const std::vector<int> & rightHistogram, 
-            double rightBias
-        );
-
-        ScanInfo PreScan(const std::string &projname) const;
+        ScanInfo PreScan() const;
         static std::string OutProgramFileName(std::string prefix, int hour);
 
         bool IsStartingNextProgram(
             long &boundary,     // out: offset into block to split program (if function returns true)
-            int hour, 
+            int hour,
             long recordingPosition,
-            long programPosition, 
-            long blockLength, 
+            long programPosition,
+            long blockLength,
             const PreGapList &gaplist) const;
 
         static FloatVector SplitBuffer(FloatVector& buffer, long offset);
         static void Append(FloatVector &target, const FloatVector& source);
         static bool Overlap(double a, double b, double x, double y)
         {
-            return 
+            return
                 (a >= x && a <= y) ||
                 (b >= x && b <= y) ||
                 (x >= a && x <= b) ||
@@ -252,7 +237,7 @@ namespace unglitch
         }
 
         static void PrintProgramSummary(
-            const std::string& filename, 
+            const std::string& filename,
             const GlitchRemover &remover,
             long programDurationSamples);
     };
@@ -318,7 +303,7 @@ namespace unglitch
             return std::max(PeakValue(left), PeakValue(right));
         }
 
-        FloatVector& First(bool flip) 
+        FloatVector& First(bool flip)
         {
             return flip ? right : left;
         }
