@@ -409,7 +409,7 @@ namespace unglitch
         void Fix(FloatVector& left, FloatVector& right);
         void WriteChunk(const Chunk &chunk);
         void Flush();
-        void AdjustProgramLength(const std::string& filename, size_t programLengthSamples);
+        bool AdjustProgramLength(const std::string& filename, size_t programLengthSamples);
 
         int GlitchCount() const
         {

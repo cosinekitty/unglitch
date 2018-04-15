@@ -397,6 +397,7 @@ namespace unglitch
         long position = 0;
         long boundary = 0;
         long programPosition = 0;
+        vector<int> hoursWithBadDurations;
         for (int b=0; b < nblocks; ++b)
         {
             const WaveBlock& leftBlock = leftTrack.Block(b);
@@ -444,7 +445,8 @@ namespace unglitch
                 remover.ResetProgram();
 
                 writer.StartNewFile(OutProgramFileName(outFilePrefix, hour));
-                remover.AdjustProgramLength(prevFileName, programPosition + boundary);
+                if (!remover.AdjustProgramLength(prevFileName, programPosition + boundary))
+                    hoursWithBadDurations.push_back(hour-1);
 
                 programPosition = 0;
             }
@@ -460,7 +462,18 @@ namespace unglitch
         PrintProgramSummary(finalFileName, remover, programPosition);
         remover.ResetProgram();
         writer.Close();
-        remover.AdjustProgramLength(finalFileName, programPosition);
+        if (!remover.AdjustProgramLength(finalFileName, programPosition))
+            hoursWithBadDurations.push_back(hour);
+
+        // Summarize program lengths at the end so I don't have to read through all the debug output.
+        cout << endl;
+        if (hoursWithBadDurations.empty())
+            cout << "SUMMARY: All " << hour << " programs have acceptable durations." << endl;
+        else
+        {
+            for (int badHour : hoursWithBadDurations)
+                cout << "WARNING: Program hour " << badHour << " has an unacceptable duration." << endl;
+        }
     }
 
     bool Project::IsStartingNextProgram(
@@ -1042,9 +1055,11 @@ namespace unglitch
         return false;
     }
 
-    void GlitchRemover::AdjustProgramLength(const std::string& filename, size_t programLengthSamples)
+    bool GlitchRemover::AdjustProgramLength(const std::string& filename, size_t programLengthSamples)
     {
         using namespace std;
+
+        bool isAcceptableLength = false;
 
         const double ToleranceSeconds = 5.0;
         const double IdealProgramMinutes = IsHeartsOfSpace(filename) ? 59.0 : 58.5;
@@ -1098,14 +1113,26 @@ namespace unglitch
                     << endl;
 
                 AudioWriter::DeleteFrontSamples(filename, bestGap->FilteredCenter());
+                isAcceptableLength = true;
             }
             else
                 cout << "ADJUST: Not adjusting program length because error is outside tolerance limit." << endl;
         }
         else
-            cout << "ADJUST: Did not find a suitable silence gap for removing filler." << endl;
+        {
+            double errorSeconds = 60.0 * abs(MinutesFromSamples(programLengthSamples) - IdealProgramMinutes);
+            if (errorSeconds < ToleranceSeconds)
+            {
+                cout << "ADJUST: Program has acceptable length " << TimeStamp(programLengthSamples) << " without adjustment." << endl;
+                isAcceptableLength = true;
+            }
+            else
+                cout << "ADJUST: Did not find a suitable silence gap for removing filler." << endl;
+        }
 
         gapFinder.Reset();
+
+        return isAcceptableLength;
     }
 
     int GlitchRemover::ChunkListSampleCount() const
